@@ -399,12 +399,14 @@ class LAPDatasetWithCache(Dataset):
         q_minus_text, idx, pos_idx, neg_idx = self.samples[index]
 
         q_plus_emb = self.q_plus_emb[idx].float()
+        q_minus_emb = self.q_minus_emb[idx].float()
         pos_emb = self.pos_emb[idx].float()
         neg_start = idx * self.num_neg_cache
         neg_emb = self.neg_emb[neg_start:neg_start + self.num_neg_cache].float()
 
         return {
             'q_minus_text': q_minus_text,
+            'q_minus_emb': q_minus_emb,
             'q_plus_emb': q_plus_emb,
             'doc_pos_emb': pos_emb,
             'doc_neg_emb': neg_emb,
@@ -417,13 +419,15 @@ def lap_cache_collate_fn(batch: List[Dict]) -> Dict:
     DataLoader 的 collate 函数（缓存模式）
 
     Returns:
-        q_minus_text: Q- 文本列表（需要实时编码）
+        q_minus_text: Q- 文本列表（用于调试）
+        q_minus_emb: Q- 嵌入 [batch, hidden_dim]（预缓存）
         q_plus_emb: Q+ 嵌入 [batch, hidden_dim]
         doc_pos_emb: 正文档嵌入 [batch, hidden_dim]
         doc_neg_emb: 负文档嵌入 [batch, hidden_dim]
         idx: 样本索引
     """
     q_minus_text = [item['q_minus_text'] for item in batch]
+    q_minus_emb = torch.stack([item['q_minus_emb'] for item in batch])
     q_plus_emb = torch.stack([item['q_plus_emb'] for item in batch])
     doc_pos_emb = torch.stack([item['doc_pos_emb'] for item in batch])
     doc_neg_emb = torch.stack([item['doc_neg_emb'] for item in batch])
@@ -431,6 +435,7 @@ def lap_cache_collate_fn(batch: List[Dict]) -> Dict:
 
     return {
         'q_minus_text': q_minus_text,
+        'q_minus_emb': q_minus_emb,
         'q_plus_emb': q_plus_emb,
         'doc_pos_emb': doc_pos_emb,
         'doc_neg_emb': doc_neg_emb,

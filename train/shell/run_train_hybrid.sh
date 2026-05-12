@@ -24,16 +24,20 @@ ENCODER_TYPE="repllama"
 TRAIN_MODE="lap_only"
 
 # GPU 设备
-GPU_ID=0
+GPU_ID=1
 
 # 训练参数
-BATCH_SIZE=32
-ENCODE_BATCH_SIZE=16
-LR=1e-4
+BATCH_SIZE=8
+ENCODE_BATCH_SIZE=8
+LR=1e-5
 EPOCHS=50
 NUM_NEG=15
 VAL_RATIO=0.1
-PATIENCE=5
+PATIENCE=10
+
+# LAP损失函数参数
+CONTRASTIVE_MARGIN=0.15
+ORTHOGONAL_TARGET=0.65
 
 # 数据目录
 DATA_DIR="dataset/FollowIR_train"
@@ -41,6 +45,16 @@ DATA_DIR="dataset/FollowIR_train"
 # 静态超参（当 use_mlp=False 时使用）
 STATIC_ALPHA=1.0
 STATIC_TAU=0.5
+
+# 输出目录（可选）
+# 不配置时使用默认自动生成路径: train/output/Hybrid/{TRAIN_MODE}/{TIMESTAMP}-{MODEL_SHORT}
+CUSTOM_OUTPUT_DIR="train/output/Hybrid/4.9-lap-training/lap_only/repllama-reproduced-v4-finetune"
+
+# 输出目录（可选，优先级低于CUSTOM_OUTPUT_DIR）
+OUTPUT_DIR=""
+
+# 训练备注（可选）
+TRAIN_NOTE="完全自适应V2: 50epochs, 让sim_good逼近动态目标0.45!"
 
 # ============================================================
 # 根据编码器类型自动设置参数
@@ -57,10 +71,10 @@ elif [ "$ENCODER_TYPE" = "bge" ]; then
     EMBED_DIM=1024
     ENCODE_BATCH_SIZE=32
 elif [ "$ENCODER_TYPE" = "repllama" ]; then
-    MODEL_NAME="castorini/repllama-v1-7b-lora-passage"
-    MODEL_SHORT="repllama-v1-7b"
+    MODEL_NAME="samaya-ai/RepLLaMA-reproduced"
+    MODEL_SHORT="repllama-reproduced"
     EMBED_DIM=4096
-    ENCODE_BATCH_SIZE=16
+    ENCODE_BATCH_SIZE=8
 else
     echo "错误: 未知的编码器类型 '$ENCODER_TYPE'"
     echo "支持的类型: bge, mistral, repllama"
@@ -73,12 +87,22 @@ if [ "$ENCODER_TYPE" = "mistral" ]; then
 elif [ "$ENCODER_TYPE" = "bge" ]; then
     CACHE_PATH="dataset/FollowIR_train/embeddings/bge-large-en/dsclr_train_embeddings_bge-large-en.pt"
 elif [ "$ENCODER_TYPE" = "repllama" ]; then
-    CACHE_PATH="dataset/FollowIR_train/embeddings/repllama-v1-7b/dsclr_train_embeddings_repllama-v1-7b.pt"
+    CACHE_PATH="dataset/FollowIR_train/embeddings/repllama-reproduced/dsclr_train_embeddings_repllama-reproduced.pt"
 fi
 
-# 输出目录
+# 输出目录（支持自定义路径）
+# 优先级: CUSTOM_OUTPUT_DIR > OUTPUT_DIR > 默认自动生成路径
 TIMESTAMP=$(date +%m.%d-%H%M)
-OUTPUT_DIR="train/output/Hybrid/${TRAIN_MODE}/${TIMESTAMP}-${MODEL_SHORT}"
+OUTPUT_DIR_IS_FINAL="False"
+if [ -n "$CUSTOM_OUTPUT_DIR" ]; then
+    OUTPUT_DIR="$CUSTOM_OUTPUT_DIR"
+    OUTPUT_DIR_IS_FINAL="True"
+    echo "使用自定义输出目录: $OUTPUT_DIR"
+elif [ -n "$OUTPUT_DIR" ]; then
+    echo "使用配置的输出目录: $OUTPUT_DIR"
+else
+    OUTPUT_DIR="train/output/Hybrid/${TRAIN_MODE}/${TIMESTAMP}-${MODEL_SHORT}"
+fi
 
 # ============================================================
 # 根据训练模式设置模块开关
@@ -163,6 +187,51 @@ USE_WANDB="False"
 # 开始训练
 # ============================================================
 
+# 创建输出目录
+mkdir -p "${OUTPUT_DIR}"
+
+# 保存实验配置
+CONFIG_FILE="${OUTPUT_DIR}/experiment_config.txt"
+cat > "${CONFIG_FILE}" << EOF
+============================================================
+Hybrid 训练实验配置
+============================================================
+
+实验时间: $(date '+%Y-%m-%d %H:%M:%S')
+输出目录: ${OUTPUT_DIR}
+
+训练模式: ${TRAIN_MODE}
+
+编码器配置:
+  ENCODER_TYPE: ${ENCODER_TYPE}
+  MODEL_NAME: ${MODEL_NAME}
+  EMBED_DIM: ${EMBED_DIM}
+
+训练参数:
+  BATCH_SIZE: ${BATCH_SIZE}
+  ENCODE_BATCH_SIZE: ${ENCODE_BATCH_SIZE}
+  LR: ${LR}
+  EPOCHS: ${EPOCHS}
+  NUM_NEG: ${NUM_NEG}
+  VAL_RATIO: ${VAL_RATIO}
+  PATIENCE: ${PATIENCE}
+
+模块开关:
+  USE_LAP: ${USE_LAP}
+  USE_MLP: ${USE_MLP}
+
+静态超参:
+  STATIC_ALPHA: ${STATIC_ALPHA}
+  STATIC_TAU: ${STATIC_TAU}
+
+GPU: ${GPU_ID}
+
+实验备注:
+  ${TRAIN_NOTE}
+EOF
+
+echo "📝 实验配置已保存到: ${CONFIG_FILE}"
+
 echo ""
 echo "🚀 开始训练..."
 echo ""
@@ -172,6 +241,7 @@ python model/train_hybrid.py \
     --batch_size $BATCH_SIZE \
     --encode_batch_size $ENCODE_BATCH_SIZE \
     --output_dir "$OUTPUT_DIR" \
+    --output_dir_is_final $OUTPUT_DIR_IS_FINAL \
     --data_dir "$DATA_DIR" \
     --cache_path "$CACHE_PATH" \
     --lr $LR \

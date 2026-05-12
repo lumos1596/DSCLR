@@ -218,6 +218,13 @@ class DeIRDenseRetriever:
             q_minus_proj_embeddings = q_minus_proj_embeddings.to(device)
             neg_mask = neg_mask.to(device)
         
+        # 确保数据类型一致（doc_embeddings 可能是 float16）
+        doc_dtype = self.doc_embeddings.dtype
+        if q_plus_embeddings.dtype != doc_dtype:
+            q_plus_embeddings = q_plus_embeddings.to(doc_dtype)
+        if q_minus_proj_embeddings.dtype != doc_dtype:
+            q_minus_proj_embeddings = q_minus_proj_embeddings.to(doc_dtype)
+        
         # 文档已在索引时归一化，查询也已归一化
         # S_pos: [num_queries, num_docs]
         S_pos = torch.matmul(q_plus_embeddings, self.doc_embeddings.T)
@@ -430,7 +437,7 @@ class DeIREvaluatorEngine:
             
             # 加载 MLP（升级后的版本，输入为 embed_dim + 1）
             # 升级后的 MLP 输入: [q_neg_proj, correlation]
-            self.mlp = DSCLR_MLP(input_dim=embed_dim, hidden_dim=mlp_hidden_dim).to(self.device)
+            self.mlp = DSCLR_MLP(hidden_dim=embed_dim).to(self.device)
             mlp_checkpoint = torch.load(mlp_model_path, map_location=self.device)
             self.mlp.load_state_dict(mlp_checkpoint['mlp_state_dict'])
             self.mlp.eval()
@@ -497,6 +504,9 @@ class DeIREvaluatorEngine:
         if self.use_deir:
             logger.info("🔄 使用 LAP 投影负向查询...")
             with torch.no_grad():
+                # 确保 embeddings 在正确的设备上
+                if q_minus_embeddings_changed.device != self.device:
+                    q_minus_embeddings_changed = q_minus_embeddings_changed.to(self.device)
                 q_minus_proj_changed = self.lap(q_minus_embeddings_changed)
         else:
             # 不使用 LAP 时，直接使用原始 q_minus
@@ -536,6 +546,18 @@ class DeIREvaluatorEngine:
                 self._save_analysis_data(
                     query_ids_og, q_raw_og, pred_alpha_og, pred_tau_og,
                     query_ids_changed, q_raw_changed, pred_alpha_changed, pred_tau_changed
+                )
+                
+                # 生成诊断报告（仅针对 changed 查询）
+                self._generate_diagnostic_report(
+                    query_ids_changed,
+                    S_pos_changed,
+                    S_neg_proj_changed,
+                    S_final_changed,
+                    pred_alpha_changed,
+                    pred_tau_changed,
+                    candidates,
+                    neg_mask_changed
                 )
             
             # 提取检索结果
@@ -726,6 +748,172 @@ class DeIREvaluatorEngine:
             logger.info(f"   Alpha - 均值: {np.mean(changed_alphas):.4f}, 标准差: {np.std(changed_alphas):.4f}, 范围: [{min(changed_alphas):.4f}, {max(changed_alphas):.4f}]")
             logger.info(f"   Tau   - 均值: {np.mean(changed_taus):.4f}, 标准差: {np.std(changed_taus):.4f}, 范围: [{min(changed_taus):.4f}, {max(changed_taus):.4f}]")
 
+    def _generate_diagnostic_report(
+        self,
+        query_ids_changed: List[str],
+        S_pos_changed: torch.Tensor,
+        S_neg_proj_changed: torch.Tensor,
+        S_final_changed: torch.Tensor,
+        pred_alpha_changed: torch.Tensor,
+        pred_tau_changed: torch.Tensor,
+        candidates: Dict[str, List[str]],
+        neg_mask_changed: torch.Tensor
+    ) -> None:
+        """
+        生成 DeIR 全局分布与误差诊断报告
+        
+        仅针对 "changed" 组查询，分析：
+        1. 正负样本的得分分布
+        2. 惩罚触发统计
+        3. 网络输出参数的统计学特征
+        """
+        logger.info("🔍 生成 DeIR 诊断报告...")
+        
+        # 加载 qrels 获取真实标签
+        qrels = self.data_loader.metrics_loader.load_qrels()
+        
+        # 收集所有样本的统计信息
+        pos_samples_s_pos = []
+        pos_samples_s_neg = []
+        neg_samples_s_pos = []
+        neg_samples_s_neg = []
+        
+        # 惩罚触发统计
+        penalty_triggered_in_pos = 0
+        total_pos_samples = 0
+        penalty_values = []
+        
+        # 遍历每个 changed 查询
+        for i, qid in enumerate(query_ids_changed):
+            base_qid = qid.replace('-changed', '')
+            # candidates 使用 base_qid（不带后缀）
+            doc_ids = candidates.get(base_qid, [])
+            
+            if not doc_ids:
+                logger.warning(f"   查询 {qid} (base: {base_qid}) 没有找到 candidates")
+                continue
+            
+            # 获取该查询的 qrels
+            # 对于 changed 查询，使用对应的 og 查询的 qrels（因为 qrels 中只有 -og 后缀的键）
+            og_qid = f"{base_qid}-og"
+            query_qrels = qrels.get(og_qid, {})
+            
+            # 获取该查询的得分和参数
+            s_pos_i = S_pos_changed[i, :len(doc_ids)].cpu().numpy()
+            s_neg_i = S_neg_proj_changed[i, :len(doc_ids)].cpu().numpy()
+            alpha_i = pred_alpha_changed[i].item()
+            tau_i = pred_tau_changed[i].item()
+            
+            # 遍历每个文档
+            for j, doc_id in enumerate(doc_ids):
+                if j >= len(s_pos_i):
+                    break
+                    
+                relevance = query_qrels.get(doc_id, 0)
+                s_pos_val = s_pos_i[j]
+                s_neg_val = s_neg_i[j]
+                
+                # 计算惩罚
+                penalty = max(0, s_neg_val - tau_i)
+                
+                if relevance > 0:
+                    # 正样本
+                    pos_samples_s_pos.append(s_pos_val)
+                    pos_samples_s_neg.append(s_neg_val)
+                    total_pos_samples += 1
+                    
+                    # 检查是否触发惩罚（误伤）
+                    if s_neg_val > tau_i:
+                        penalty_triggered_in_pos += 1
+                        penalty_values.append(penalty)
+                else:
+                    # 负样本
+                    neg_samples_s_pos.append(s_pos_val)
+                    neg_samples_s_neg.append(s_neg_val)
+                    
+                    # 记录所有触发惩罚的样本
+                    if s_neg_val > tau_i:
+                        penalty_values.append(penalty)
+        
+        # 计算统计信息
+        def compute_stats(values):
+            if not values:
+                return {"mean": 0, "min": 0, "max": 0, "p25": 0, "p50": 0, "p75": 0}
+            arr = np.array(values)
+            return {
+                "mean": float(np.mean(arr)),
+                "min": float(np.min(arr)),
+                "max": float(np.max(arr)),
+                "p25": float(np.percentile(arr, 25)),
+                "p50": float(np.percentile(arr, 50)),
+                "p75": float(np.percentile(arr, 75))
+            }
+        
+        # 1. 正负样本的得分分布
+        score_distribution = {
+            "positive_samples": {
+                "count": len(pos_samples_s_pos),
+                "S_pos": compute_stats(pos_samples_s_pos),
+                "S_neg_proj": compute_stats(pos_samples_s_neg)
+            },
+            "negative_samples": {
+                "count": len(neg_samples_s_pos),
+                "S_pos": compute_stats(neg_samples_s_pos),
+                "S_neg_proj": compute_stats(neg_samples_s_neg)
+            }
+        }
+        
+        # 2. 惩罚触发统计
+        false_positive_rate = (penalty_triggered_in_pos / total_pos_samples * 100) if total_pos_samples > 0 else 0
+        avg_penalty = np.mean(penalty_values) if penalty_values else 0
+        
+        penalty_stats = {
+            "total_positive_samples": total_pos_samples,
+            "penalty_triggered_in_positive": penalty_triggered_in_pos,
+            "false_positive_rate_percent": float(false_positive_rate),
+            "avg_penalty_value": float(avg_penalty),
+            "total_penalty_triggered": len(penalty_values)
+        }
+        
+        # 3. 网络输出参数的统计学特征
+        alpha_values = pred_alpha_changed.cpu().numpy()
+        tau_values = pred_tau_changed.cpu().numpy()
+        
+        network_params = {
+            "alpha": compute_stats(alpha_values.tolist()),
+            "tau": compute_stats(tau_values.tolist())
+        }
+        
+        # 构建完整报告
+        report = {
+            "task": self.task_name,
+            "model": self.model_name,
+            "timestamp": datetime.now().isoformat(),
+            "num_changed_queries": len(query_ids_changed),
+            "score_distribution": score_distribution,
+            "penalty_activation_stats": penalty_stats,
+            "network_parameters": network_params
+        }
+        
+        # 保存报告
+        report_path = os.path.join(self.output_dir, "deir_diagnostic_report.json")
+        with open(report_path, 'w', encoding='utf-8') as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"💾 DeIR 诊断报告已保存: {report_path}")
+        
+        # 打印关键发现
+        logger.info("📊 诊断报告关键发现:")
+        logger.info(f"   正样本数: {len(pos_samples_s_pos)}, 负样本数: {len(neg_samples_s_pos)}")
+        logger.info(f"   正样本 S_pos 均值: {score_distribution['positive_samples']['S_pos']['mean']:.4f}")
+        logger.info(f"   正样本 S_neg_proj 均值: {score_distribution['positive_samples']['S_neg_proj']['mean']:.4f}")
+        logger.info(f"   负样本 S_pos 均值: {score_distribution['negative_samples']['S_pos']['mean']:.4f}")
+        logger.info(f"   负样本 S_neg_proj 均值: {score_distribution['negative_samples']['S_neg_proj']['mean']:.4f}")
+        logger.info(f"   误伤率 (正样本触发惩罚): {false_positive_rate:.2f}%")
+        logger.info(f"   平均惩罚值: {avg_penalty:.4f}")
+        logger.info(f"   Alpha - 中位数: {network_params['alpha']['p50']:.4f}, P75: {network_params['alpha']['p75']:.4f}")
+        logger.info(f"   Tau - 中位数: {network_params['tau']['p50']:.4f}, P75: {network_params['tau']['p75']:.4f}")
+
     def _get_all_candidate_doc_ids(self, candidates: Dict[str, List[str]]) -> List[str]:
         """获取所有候选文档ID（去重）"""
         all_doc_ids = set()
@@ -899,11 +1087,9 @@ class DeIREvaluatorEngine:
             all_base_qids.add(base_qid)
         
         # 加载 qrels
-        from eval.engine import FollowIRDataLoader
-        data_loader = FollowIRDataLoader(self.task_name)
-        _, _, _, _ = data_loader.load()  # 确保数据已加载
-        qrels_og = data_loader.qrels_og
-        qrels_changed = data_loader.qrels_changed
+        # 加载 qrels - 直接使用 data_loader 中的 metrics_loader
+        qrels_og = self.data_loader.metrics_loader.load_qrels()
+        qrels_changed = qrels_og  # changed 查询使用相同的 qrels
         
         # 为每个查询计算指标
         for base_qid in all_base_qids:
@@ -912,10 +1098,10 @@ class DeIREvaluatorEngine:
             
             # 计算不同 k 值的指标
             for k in [1, 3, 5, 10]:
-                # OG 查询指标
+                # OG 查询指标 - qrels 的键是带 -og 后缀的
                 if og_key in results_og:
                     og_metrics = self._compute_single_query_metrics(
-                        results_og[og_key], qrels_og.get(base_qid, {}), k
+                        results_og[og_key], qrels_og.get(og_key, {}), k
                     )
                     all_metrics.append({
                         'qid': base_qid,
@@ -924,10 +1110,10 @@ class DeIREvaluatorEngine:
                         **og_metrics
                     })
                 
-                # Changed 查询指标
+                # Changed 查询指标 - qrels 的键是带 -changed 后缀的
                 if changed_key in results_changed:
                     changed_metrics = self._compute_single_query_metrics(
-                        results_changed[changed_key], qrels_changed.get(base_qid, {}), k
+                        results_changed[changed_key], qrels_changed.get(changed_key, {}), k
                     )
                     all_metrics.append({
                         'qid': base_qid,
@@ -995,7 +1181,11 @@ class DeIREvaluatorEngine:
         best_metrics: Dict
     ) -> None:
         """保存评测结果"""
-        results_path = os.path.join(self.output_dir, "random_search_results.json")
+        # 根据模式选择文件名
+        if self.use_deir:
+            results_path = os.path.join(self.output_dir, "deir_dynamic_results.json")
+        else:
+            results_path = os.path.join(self.output_dir, "random_search_results.json")
         
         # 构建可序列化的结果
         serializable_results = []
@@ -1066,6 +1256,26 @@ class DeIREvaluatorEngine:
                 'MAP10': full_scores.get('og', {}).get('map_at_10', 0),
                 'MAP100': full_scores.get('og', {}).get('map_at_100', 0),
                 'MAP1000': full_scores.get('og', {}).get('map_at_1000', 0),
+            },
+            'changed': {
+                'nDCG@1': full_scores.get('changed', {}).get('ndcg_at_1', 0),
+                'nDCG@3': full_scores.get('changed', {}).get('ndcg_at_3', 0),
+                'nDCG@5': full_scores.get('changed', {}).get('ndcg_at_5', 0),
+                'nDCG@10': full_scores.get('changed', {}).get('ndcg_at_10', 0),
+                'nDCG@100': full_scores.get('changed', {}).get('ndcg_at_100', 0),
+                'nDCG@1000': full_scores.get('changed', {}).get('ndcg_at_1000', 0),
+                'MRR1': full_scores.get('changed', {}).get('mrr_at_1', 0),
+                'MRR3': full_scores.get('changed', {}).get('mrr_at_3', 0),
+                'MRR5': full_scores.get('changed', {}).get('mrr_at_5', 0),
+                'MRR10': full_scores.get('changed', {}).get('mrr_at_10', 0),
+                'MRR100': full_scores.get('changed', {}).get('mrr_at_100', 0),
+                'MRR1000': full_scores.get('changed', {}).get('mrr_at_1000', 0),
+                'MAP1': full_scores.get('changed', {}).get('map_at_1', 0),
+                'MAP3': full_scores.get('changed', {}).get('map_at_3', 0),
+                'MAP5': full_scores.get('changed', {}).get('map_at_5', 0),
+                'MAP10': full_scores.get('changed', {}).get('map_at_10', 0),
+                'MAP100': full_scores.get('changed', {}).get('map_at_100', 0),
+                'MAP1000': full_scores.get('changed', {}).get('map_at_1000', 0),
             },
             'best_params': best_metrics.get('best_params', {}),
             'task': self.task_name,

@@ -23,15 +23,17 @@ echo "✅ Python 路径: $(which python)"
 # ============================================================
 # 默认配置
 # ============================================================
-MODEL_NAME="BAAI/bge-large-en-v1.5"
-GPU_ID=0
-BATCH_SIZE=256
+MODEL_NAME="intfloat/e5-mistral-7b-instruct"
+GPU_ID=1
+BATCH_SIZE=24
 SEED=42
 VERBOSE=false
-TASKS=("Core17InstructionRetrieval")
+# TASKS=("Core17InstructionRetrieval")
+TASKS=("Robust04InstructionRetrieval")
+# TASKS=("News21InstructionRetrieval")
 # 输出路径 (指定 CUSTOM_OUTPUT_PATH 后直接使用，否则自动生成)
 OUTPUT_BASE_DIR="/home/luwa/Documents/DSCLR/evaluation"
-CUSTOM_OUTPUT_PATH="/home/luwa/Documents/DSCLR/evaluation/origin_test"
+CUSTOM_OUTPUT_PATH="/home/luwa/Documents/DSCLR/evaluation/origin_test/e5-mistral-7b-instruct/${TASKS[0]}"
 
 # ============================================================
 # 显示帮助信息

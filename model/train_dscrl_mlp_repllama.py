@@ -31,10 +31,19 @@ class DSCLRDataset(Dataset):
     """RepLLaMA 数据集加载器"""
     def __init__(self, cache_path, num_neg=15):
         self.data = torch.load(cache_path, weights_only=False)
-        self.data['q_plus'] = self.data['q_plus'].float()
-        self.data['q_minus'] = self.data['q_minus'].float()
-        self.data['pos'] = self.data['pos'].float()
-        self.data['neg'] = self.data['neg'].float()
+        
+        # 兼容两种键名格式
+        if 'q_plus_embeddings' in self.data:
+            self.data['q_plus'] = self.data['q_plus_embeddings'].float()
+            self.data['q_minus'] = self.data['q_minus_embeddings'].float()
+            self.data['pos'] = self.data['pos_embeddings'].float()
+            self.data['neg'] = self.data['neg_embeddings'].float()
+        else:
+            self.data['q_plus'] = self.data['q_plus'].float()
+            self.data['q_minus'] = self.data['q_minus'].float()
+            self.data['pos'] = self.data['pos'].float()
+            self.data['neg'] = self.data['neg'].float()
+        
         self.num_neg = num_neg
         self.num_queries = len(self.data['q_plus'])
         
@@ -150,7 +159,7 @@ def train_epoch(mlp, dataloader, optimizer, device):
         pos = batch['pos'].to(device)
         neg = batch['neg'].to(device)
         
-        neg_mask = (q_minus.abs().sum(dim=1) > 0).float()
+        neg_mask = (q_minus.norm(dim=1) > 1e-6).float()
         neg_mask = neg_mask.unsqueeze(1).expand(-1, neg.size(1))
         
         S_final, alpha, tau, penalty_pos, penalty_neg = compute_scores(
@@ -205,7 +214,7 @@ def validate(mlp, dataloader, device):
         pos = batch['pos'].to(device)
         neg = batch['neg'].to(device)
         
-        neg_mask = (q_minus.abs().sum(dim=1) > 0).float()
+        neg_mask = (q_minus.norm(dim=1) > 1e-6).float()
         neg_mask = neg_mask.unsqueeze(1).expand(-1, neg.size(1))
         
         S_final, alpha, tau, penalty_pos, penalty_neg = compute_scores(

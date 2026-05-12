@@ -203,12 +203,12 @@ class DeIRFriendlyFireLoss(nn.Module):
 
 
 def plot_realtime_loss(history, output_dir, is_mlp_phase=False):
-    """实时绘制并保存损失曲线
+    """实时绘制并保存损失曲线和相似度曲线
     
     Args:
         history: 训练历史记录
         output_dir: 输出目录
-        is_mlp_phase: 是否是MLP阶段（不绘制LAP分解损失）
+        is_mlp_phase: 是否是MLP阶段（不绘制LAP相似度曲线）
     """
     try:
         import matplotlib.pyplot as plt
@@ -220,40 +220,39 @@ def plot_realtime_loss(history, output_dir, is_mlp_phase=False):
 
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
+        # 左图：总损失对比
         axes[0].plot(steps, history['train_loss'], 'b-', label='Train Loss', linewidth=2, marker='o')
         axes[0].plot(steps, history['val_loss'], 'r-', label='Val Loss', linewidth=2, marker='s')
-        axes[0].set_xlabel('Step (10% of Epoch)', fontsize=12)
+        axes[0].set_xlabel('Epoch', fontsize=12)
         axes[0].set_ylabel('Loss', fontsize=12)
-        axes[0].set_title('Training - Total Loss', fontsize=14)
+        axes[0].set_title('LAP Training - Total Loss', fontsize=14)
         axes[0].legend(fontsize=11)
         axes[0].grid(True, alpha=0.3)
 
-        # 右图：LAP分解损失（仅在LAP阶段显示）
+        # 右图：LAP相似度曲线（关键监控指标！）
         if is_mlp_phase:
             # MLP阶段：显示说明文字
             axes[1].axis('off')
-            axes[1].text(0.5, 0.5, 'MLP Phase\n(LAP Frozen)\n\nNo LAP Loss Decomposition', 
+            axes[1].text(0.5, 0.5, 'MLP Phase\n(LAP Frozen)\n\nNo LAP Similarity', 
                         ha='center', va='center', fontsize=14, 
                         transform=axes[1].transAxes)
             axes[1].set_title('MLP Phase (LAP Frozen)', fontsize=14)
-        elif any(history['train_loss_pos']) or any(history['train_loss_neg']):
-            # LAP阶段：显示分解损失
-            # 过滤掉0值（MLP阶段可能填充的）
-            pos_losses = [x if x != 0 else None for x in history['train_loss_pos']]
-            neg_losses = [x if x != 0 else None for x in history['train_loss_neg']]
-            
-            if any(pos_losses):
-                axes[1].plot(steps, pos_losses, 'g-', label='Push Away', linewidth=2, marker='^')
-            if any(neg_losses):
-                axes[1].plot(steps, neg_losses, 'orange', label='Pull Closer', linewidth=2, marker='v')
-            axes[1].set_xlabel('Step (10% of Epoch)', fontsize=12)
-            axes[1].set_ylabel('Loss', fontsize=12)
-            axes[1].set_title('LAP - Loss Decomposition', fontsize=14)
-            axes[1].legend(fontsize=11)
+        elif 'sim_good' in history and len(history['sim_good']) > 0:
+            # LAP阶段：显示相似度曲线（这才是应该看的！）
+            axes[1].plot(steps, history['sim_good'], 'g-', label='Sim_Good (q_neg vs d_pos)', linewidth=2, marker='v')
+            axes[1].plot(steps, history['sim_bad'], 'orange', label='Sim_Bad (q_neg vs d_neg)', linewidth=2, marker='^')
+            # 💥 完全自适应：显示动态目标线
+            if 'adaptive_target' in history and len(history['adaptive_target']) > 0:
+                axes[1].plot(steps, history['adaptive_target'], 'g--', alpha=0.7, label='Dynamic Target (adaptive)', linewidth=1.5)
+            axes[1].axhline(y=0.80, color='gray', linestyle=':', alpha=0.3, label='Ref: sim_bad baseline')
+            axes[1].set_xlabel('Epoch', fontsize=12)
+            axes[1].set_ylabel('Cosine Similarity', fontsize=12)
+            axes[1].set_title('LAP - Similarity Tracking (Fully Adaptive)', fontsize=14)
+            axes[1].legend(fontsize=10)
             axes[1].grid(True, alpha=0.3)
         else:
             axes[1].axis('off')
-            axes[1].set_title('No LAP Decomposition', fontsize=14)
+            axes[1].set_title('No LAP Similarity Data', fontsize=14)
 
         plt.tight_layout()
         loss_path = os.path.join(output_dir, "loss_curve.png")
@@ -267,9 +266,24 @@ def plot_realtime_loss(history, output_dir, is_mlp_phase=False):
         print(f"⚠️ 绘图失败: {e}")
 
 
-def lap_loss(q_minus_proj, d_pos, d_neg, criterion_lap):
-    """LAP 逆向对比损失"""
-    return criterion_lap(q_minus_proj, d_pos, d_neg)
+def lap_loss(q_minus_proj, q_minus_raw, d_pos, d_neg, criterion_lap, dynamic_tau=0.80):
+    """LAP 逆向对比损失 - 自适应动态锚点版
+    
+    Args:
+        q_minus_proj: LAP 投影后的负向查询向量
+        q_minus_raw: 原始负向查询向量（未投影）
+        d_pos: 正样本文档向量
+        d_neg: 负样本文档向量
+        criterion_lap: LAP 损失函数
+        dynamic_tau: 动态底噪水平
+    
+    Returns:
+        total_loss: 总损失
+        sim_good: 好文相似度均值
+        sim_bad: 烂文相似度均值
+        base_sim_bad: 原始烂文相似度均值
+    """
+    return criterion_lap(q_minus_proj, q_minus_raw, d_pos, d_neg, dynamic_tau)
 
 
 def encode_texts(encoder, texts, batch_size, mode="document"):
@@ -348,7 +362,7 @@ def load_encoder(model_type, device, batch_size):
     elif model_type == "repllama":
         from eval.models.repllama_encoder import RepLLaMAEncoder
         encoder = RepLLaMAEncoder(
-            model_name="castorini/repllama-v1-7b-lora-passage",
+            model_name="samaya-ai/RepLLaMA-reproduced",
             device=device,
             batch_size=min(batch_size, 28),
             normalize_embeddings=True
@@ -604,7 +618,7 @@ def train_epoch_mlp_with_cache_with_mid_val(dataloader, model, optimizer, device
 
 
 def train_epoch_lap(dataloader, model, optimizer, device, criterion_lap, encoder, encode_batch_size, wandb_logger=None):
-    """LAP Only 模式训练（Q_minus 实时编码，文档从缓存加载）
+    """LAP Only 模式训练（使用缓存的 Q_minus 嵌入，无需实时编码）
 
     Args:
         wandb_logger: Wandb logger instance, if None then skip wandb logging
@@ -612,20 +626,17 @@ def train_epoch_lap(dataloader, model, optimizer, device, criterion_lap, encoder
     total_loss = 0
     total_loss_pos = 0
     total_loss_neg = 0
+    total_adaptive_target = 0
     num_batches = 0
     global_step = 0
 
     for batch in tqdm(dataloader, desc="LAP Training"):
-        q_minus_texts = batch['q_minus_text']
+        q_minus_emb = batch['q_minus_emb'].to(device)
         doc_pos_emb = batch['doc_pos_emb'].to(device)
         doc_neg_emb = batch['doc_neg_emb'].to(device)
 
         batch_size = doc_pos_emb.size(0)
         num_neg = doc_neg_emb.size(1)
-
-        with torch.no_grad():
-            q_minus_emb = encode_texts(encoder, q_minus_texts, encode_batch_size, mode="query")
-        q_minus_emb = q_minus_emb.to(device).float().float()
 
         raw_q_minus_proj = model.lap(q_minus_emb, return_raw=True)
         q_minus_proj = F.normalize(raw_q_minus_proj, p=2, dim=-1)
@@ -637,7 +648,21 @@ def train_epoch_lap(dataloader, model, optimizer, device, criterion_lap, encoder
         diag_sim_pos = torch.diag(sim_pos)
         diag_sim_neg = torch.diag(sim_neg)
 
-        loss, loss_pos, loss_neg, _ = lap_loss(q_minus_proj, doc_pos_emb, doc_neg_emb_2d, criterion_lap)
+        # 💥 完全自适应动态锚点：传递原始向量 q_minus_emb 作为锚点
+        # 返回的动态目标 = 原始烂文分数 - margin_push - margin_drop
+        loss, adaptive_target = lap_loss(q_minus_proj, q_minus_emb, doc_pos_emb, doc_neg_emb_2d, criterion_lap)
+        
+        # 计算当前相似度用于监控
+        with torch.no_grad():
+            sim_good = torch.mean(torch.sum(q_minus_proj * doc_pos_emb, dim=-1)).item()
+            sim_bad = torch.mean(torch.sum(q_minus_proj.unsqueeze(1) * doc_neg_emb, dim=-1)).item()
+        
+        # 为了兼容旧代码，将相似度作为"损失"记录
+        loss_pos = sim_good  # sim_good 作为 "push loss"
+        loss_neg = sim_bad   # sim_bad 作为 "pull loss"
+        
+        # 保存动态目标用于后续日志
+        batch_adaptive_target = adaptive_target
 
         optimizer.zero_grad()
         loss.backward()
@@ -645,8 +670,9 @@ def train_epoch_lap(dataloader, model, optimizer, device, criterion_lap, encoder
         optimizer.step()
 
         total_loss += loss.item()
-        total_loss_pos += loss_pos.item()
-        total_loss_neg += loss_neg.item()
+        total_loss_pos += loss_pos  # sim_good 已经是 float
+        total_loss_neg += loss_neg  # sim_bad 已经是 float
+        total_adaptive_target += batch_adaptive_target  # 💥 累加动态目标
         num_batches += 1
 
         if wandb_logger is not None:
@@ -657,8 +683,8 @@ def train_epoch_lap(dataloader, model, optimizer, device, criterion_lap, encoder
             # 安全记录到 wandb（detach + cpu）
             wandb_logger.log({
                 "Loss/Total": loss.detach().cpu().item(),
-                "Loss/Push_Pos": loss_pos.detach().cpu().item(),
-                "Loss/Pull_Neg": loss_neg.detach().cpu().item(),
+                "Loss/Push_Pos": loss_pos,
+                "Loss/Pull_Neg": loss_neg,
                 "Matrix/Frobenius_Dist": w_diff.detach().cpu().item(),
                 "Matrix/Mean_Norm": mean_norm.detach().cpu().item(),
                 "Distribution/Sim_to_Good_Docs": wandb.Histogram(diag_sim_pos.detach().cpu().numpy()),
@@ -667,10 +693,16 @@ def train_epoch_lap(dataloader, model, optimizer, device, criterion_lap, encoder
             })
             global_step += 1
 
+    # 计算平均动态目标值
+    avg_adaptive_target = total_adaptive_target / num_batches if num_batches > 0 else 0
+    
     return {
         'loss': total_loss / num_batches,
         'loss_pos': total_loss_pos / num_batches,
-        'loss_neg': total_loss_neg / num_batches
+        'loss_neg': total_loss_neg / num_batches,
+        'sim_good_mean': total_loss_pos / num_batches,  # 实际上是 sim_good 的平均
+        'sim_bad_mean': total_loss_neg / num_batches,   # 实际上是 sim_bad 的平均
+        'adaptive_target': avg_adaptive_target          # 💥 动态目标值
     }
 
 
@@ -695,16 +727,12 @@ def train_epoch_lap_with_mid_val(dataloader, model, optimizer, device, criterion
     checkpoint_interval = max(1, total_batches // 10)
 
     for batch_idx, batch in enumerate(tqdm(dataloader, desc="LAP Training")):
-        q_minus_texts = batch['q_minus_text']
+        q_minus_emb = batch['q_minus_emb'].to(device)
         doc_pos_emb = batch['doc_pos_emb'].to(device)
         doc_neg_emb = batch['doc_neg_emb'].to(device)
 
         batch_size = doc_pos_emb.size(0)
         num_neg = doc_neg_emb.size(1)
-
-        with torch.no_grad():
-            q_minus_emb = encode_texts(encoder, q_minus_texts, encode_batch_size, mode="query")
-        q_minus_emb = q_minus_emb.to(device).float().float()
 
         raw_q_minus_proj = model.lap(q_minus_emb, return_raw=True)
         q_minus_proj = F.normalize(raw_q_minus_proj, p=2, dim=-1)
@@ -769,6 +797,13 @@ def train_epoch_lap_with_mid_val(dataloader, model, optimizer, device, criterion
             history['val_loss'].append(val_metrics['loss'])
             history['score_gap'] = history.get('score_gap', [])
             history['score_gap'].append(top1_score_gap)
+            # 记录相似度（关键监控指标！）
+            sim_good = loss_metrics.get('sim_good_mean', 0)
+            sim_bad = loss_metrics.get('sim_bad_mean', 0)
+            history['sim_good'] = history.get('sim_good', [])
+            history['sim_bad'] = history.get('sim_bad', [])
+            history['sim_good'].append(sim_good)
+            history['sim_bad'].append(sim_bad)
             plot_realtime_loss(history, output_dir, is_mlp_phase=False)
             
             # 重置区间统计
@@ -903,15 +938,10 @@ def validate(model, dataloader, device, encoder_type, mode, criterion_lap=None, 
 
     for batch in tqdm(dataloader, desc="Validation"):
         if mode == 'lap_only' or mode == 'hybrid' or mode == 'mlp_only':
-            # LAP/Hybrid/LAP_then_MLP 模式：Q_minus 实时编码，文档从缓存加载
-            q_minus_texts = batch['q_minus_text']
+            q_minus_emb = batch['q_minus_emb'].to(device)
             doc_pos_emb = batch['doc_pos_emb'].to(device)
             doc_neg_emb = batch['doc_neg_emb'].to(device)
-
-            q_minus_emb = encode_texts(encoder, q_minus_texts, encode_batch_size, mode="query")
-            q_minus_emb = q_minus_emb.to(device)
         else:
-            # baseline/mlp_only 模式：使用缓存的嵌入
             q_minus_emb = batch['q_minus'].to(device)
             doc_pos_emb = batch['pos'].to(device)
             doc_neg_emb = batch['neg'].to(device)
@@ -942,8 +972,13 @@ def validate(model, dataloader, device, encoder_type, mode, criterion_lap=None, 
             num_neg = doc_neg_emb.size(1)
             doc_neg_emb_2d = doc_neg_emb.reshape(batch_size * num_neg, -1)
             doc_neg_emb_2d_norm = F.normalize(doc_neg_emb_2d, p=2, dim=-1)
-            loss, _, _, loss_metrics = lap_loss(q_minus_proj_norm, doc_pos_emb, doc_neg_emb_2d_norm, criterion_lap)
-            top1_score_gap = loss_metrics.get('score_gap', 0.0)
+            # 💥 完全自适应动态锚点：传递原始向量 q_minus_emb
+            loss, adaptive_target = lap_loss(q_minus_proj_norm, q_minus_emb, doc_pos_emb, doc_neg_emb_2d_norm, criterion_lap)
+            # 计算当前相似度用于监控
+            with torch.no_grad():
+                sim_good = torch.mean(torch.sum(q_minus_proj_norm * doc_pos_emb, dim=-1)).item()
+                sim_bad = torch.mean(torch.sum(q_minus_proj_norm.unsqueeze(1) * doc_neg_emb, dim=-1)).item()
+            top1_score_gap = sim_bad - sim_good  # 简单的分数差距
 
         elif mode == 'hybrid':
             q_plus_emb = batch['q_plus_emb'].to(device)
@@ -954,7 +989,8 @@ def validate(model, dataloader, device, encoder_type, mode, criterion_lap=None, 
             batch_size = doc_pos_emb.size(0)
             num_neg = doc_neg_emb.size(1)
             doc_neg_emb_2d = doc_neg_emb.reshape(batch_size * num_neg, -1)
-            loss_lap, _, _, _ = lap_loss(q_minus_proj, doc_pos_emb, doc_neg_emb_2d, criterion_lap)
+            # 💥 自适应动态锚点：传递原始向量 q_minus_emb
+            loss_lap, _ = lap_loss(q_minus_proj, q_minus_emb, doc_pos_emb, doc_neg_emb_2d, criterion_lap)
             loss = loss_dsclr + 0.5 * loss_lap
 
         total_loss += loss.item()
@@ -1149,10 +1185,16 @@ def main():
 
     # 加载编码器（仅 LAP/Hybrid 模式需要）
     encoder = None
-    if TRAIN_MODE == 'lap_only' or TRAIN_MODE == 'hybrid' or TRAIN_MODE == 'lap_then_mlp':
+    if TRAIN_MODE == 'lap_then_mlp':
         print("\n加载编码器...")
         encoder = load_encoder(args.model_type, DEVICE, args.encode_batch_size)
         print(f"编码器已加载: {args.model_type}")
+    elif TRAIN_MODE == 'hybrid':
+        print("\n加载编码器...")
+        encoder = load_encoder(args.model_type, DEVICE, args.encode_batch_size)
+        print(f"编码器已加载: {args.model_type}")
+    elif TRAIN_MODE == 'lap_only':
+        print("\n跳过编码器加载（使用缓存的嵌入）")
 
     # 创建模型
     print("\n初始化模型...")
@@ -1163,16 +1205,16 @@ def main():
         use_mlp=True if TRAIN_MODE == 'lap_then_mlp' else args.use_mlp,
         static_alpha=args.static_alpha,
         static_tau=args.static_tau,
-        encoder_type=args.model_type
+        encoder_type=args.model_type,
+        lap_rank=32  # 极限压缩：逼迫模型只学最核心泛化特征
     ).to(DEVICE)
 
     model.summary_params()
 
-    # 损失函数
+    # 损失函数（💥 自适应动态锚点版）
     criterion_lap = LAPContrastiveLoss(
-        margin_pos=args.lap_margin_pos,
-        margin_neg=args.lap_margin_neg,
-        use_in_batch=True
+        margin_push=0.15,
+        margin_drop=0.10
     )
 
     # 优化器
@@ -1186,7 +1228,7 @@ def main():
 
     trainable_params = model.get_trainable_params(mode=trainable_mode)
     if trainable_params:
-        optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, weight_decay=0.01)
+        optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, weight_decay=0.1)
     else:
         optimizer = None
     
@@ -1204,7 +1246,9 @@ def main():
         'train_loss': [],
         'train_loss_pos': [],
         'train_loss_neg': [],
-        'val_loss': []
+        'val_loss': [],
+        'sim_good': [],
+        'sim_bad': []
     }
 
     best_val_loss = float('inf')
@@ -1356,6 +1400,9 @@ def main():
         print(f"✅ MLP 阶段训练完成，最终模型已保存: {final_mlp_path}")
 
     else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.lr * 0.1)
+        print(f"\n📊 学习率调度: CosineAnnealingLR (lr={args.lr} → {args.lr * 0.1}, T_max={args.epochs})")
+
         for epoch in range(args.epochs):
             print(f"\nEpoch {epoch+1}/{args.epochs}")
 
@@ -1372,12 +1419,25 @@ def main():
 
             val_metrics = validate(model, val_loader, DEVICE, args.model_type, TRAIN_MODE, criterion_lap, encoder, args.encode_batch_size)
 
+            scheduler.step()
+
             history['train_loss'].append(train_metrics['loss'])
             history['train_loss_pos'].append(train_metrics.get('loss_pos', 0))
             history['train_loss_neg'].append(train_metrics.get('loss_neg', 0))
             history['val_loss'].append(val_metrics['loss'])
+            # 记录相似度（关键监控指标！）
+            sim_good = train_metrics.get('sim_good_mean', 0)
+            sim_bad = train_metrics.get('sim_bad_mean', 0)
+            adaptive_target = train_metrics.get('adaptive_target', 0)
+            history['sim_good'] = history.get('sim_good', [])
+            history['sim_bad'] = history.get('sim_bad', [])
+            history['adaptive_target'] = history.get('adaptive_target', [])  # 💥 动态目标
+            history['sim_good'].append(sim_good)
+            history['sim_bad'].append(sim_bad)
+            history['adaptive_target'].append(adaptive_target)
 
-            print(f"Train Loss: {train_metrics['loss']:.4f} (Push: {train_metrics.get('loss_pos', 0):.4f}, Pull: {train_metrics.get('loss_neg', 0):.4f}), Val Loss: {val_metrics['loss']:.4f}")
+            print(f"Train Loss: {train_metrics['loss']:.4f} (sim_good: {sim_good:.4f}, sim_bad: {sim_bad:.4f}), Val Loss: {val_metrics['loss']:.4f}")
+            print(f"  → 💥 完全自适应: sim_good 目标={adaptive_target:.3f} (动态), sim_bad 紧贴原始底线")
 
             plot_realtime_loss(history, OUTPUT_DIR)
 

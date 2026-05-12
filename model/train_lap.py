@@ -206,12 +206,12 @@ def train_epoch(
     训练一个 epoch
     
     Returns:
-        metrics: 包含 loss, loss_pos, loss_neg 等指标
+        metrics: 包含 loss, sim_good_mean, sim_bad_mean 等指标
     """
     model.train()
     total_loss = 0
-    total_loss_pos = 0
-    total_loss_neg = 0
+    total_sim_good = 0
+    total_sim_bad = 0
     num_batches = 0
     
     for batch in tqdm(dataloader, desc="Training"):
@@ -234,7 +234,7 @@ def train_epoch(
         q_neg_proj = model.project_q_minus(q_minus_emb)
         
         # 计算损失
-        loss, loss_pos, loss_neg = criterion(q_neg_proj, d_pos_emb, d_neg_emb)
+        loss, sim_good_mean, sim_bad_mean = criterion(q_neg_proj, d_pos_emb, d_neg_emb)
         
         if torch.isnan(loss):
             print("⚠️ Loss is NaN, skipping batch")
@@ -247,14 +247,14 @@ def train_epoch(
         optimizer.step()
         
         total_loss += loss.item()
-        total_loss_pos += loss_pos.item()
-        total_loss_neg += loss_neg.item()
+        total_sim_good += sim_good_mean
+        total_sim_bad += sim_bad_mean
         num_batches += 1
     
     return {
         'loss': total_loss / num_batches if num_batches > 0 else 0,
-        'loss_pos': total_loss_pos / num_batches if num_batches > 0 else 0,
-        'loss_neg': total_loss_neg / num_batches if num_batches > 0 else 0
+        'sim_good_mean': total_sim_good / num_batches if num_batches > 0 else 0,
+        'sim_bad_mean': total_sim_bad / num_batches if num_batches > 0 else 0
     }
 
 
@@ -270,12 +270,12 @@ def validate(
     验证
     
     Returns:
-        metrics: 包含 loss, loss_pos, loss_neg 等指标
+        metrics: 包含 loss, sim_good_mean, sim_bad_mean 等指标
     """
     model.eval()
     total_loss = 0
-    total_loss_pos = 0
-    total_loss_neg = 0
+    total_sim_good = 0
+    total_sim_bad = 0
     num_batches = 0
     
     for batch in tqdm(dataloader, desc="Validation"):
@@ -296,18 +296,18 @@ def validate(
         q_neg_proj = model.project_q_minus(q_minus_emb)
         
         # 计算损失
-        loss, loss_pos, loss_neg = criterion(q_neg_proj, d_pos_emb, d_neg_emb)
+        loss, sim_good_mean, sim_bad_mean = criterion(q_neg_proj, d_pos_emb, d_neg_emb)
         
         if not torch.isnan(loss):
             total_loss += loss.item()
-            total_loss_pos += loss_pos.item()
-            total_loss_neg += loss_neg.item()
+            total_sim_good += sim_good_mean
+            total_sim_bad += sim_bad_mean
             num_batches += 1
     
     return {
         'loss': total_loss / num_batches if num_batches > 0 else 0,
-        'loss_pos': total_loss_pos / num_batches if num_batches > 0 else 0,
-        'loss_neg': total_loss_neg / num_batches if num_batches > 0 else 0
+        'sim_good_mean': total_sim_good / num_batches if num_batches > 0 else 0,
+        'sim_bad_mean': total_sim_bad / num_batches if num_batches > 0 else 0
     }
 
 
@@ -324,8 +324,10 @@ def main():
     parser.add_argument('--patience', type=int, default=5, help='Early stopping patience')
     parser.add_argument('--model_type', type=str, default='repllama', 
                         choices=['bge', 'mistral', 'repllama'], help='Encoder type')
-    parser.add_argument('--margin_pos', type=float, default=0.1, help='Margin for push-away loss')
-    parser.add_argument('--margin_neg', type=float, default=0.8, help='Margin for pull-closer loss')
+    parser.add_argument('--contrastive_margin', type=float, default=0.15, 
+                        help='Relative contrastive margin (default: 0.15)')
+    parser.add_argument('--orthogonal_target', type=float, default=0.65, 
+                        help='Orthogonal target for good docs (default: 0.65)')
     parser.add_argument('--num_neg_per_query', type=int, default=1, help='Number of negatives per query')
     args = parser.parse_args()
     
@@ -406,11 +408,10 @@ def main():
         use_lap=True
     ).to(DEVICE)
     
-    # 损失函数
+    # 损失函数 (重构版: 相对锚定 + 软正交损失)
     criterion = LAPContrastiveLoss(
-        margin_pos=args.margin_pos,
-        margin_neg=args.margin_neg,
-        use_in_batch=True
+        contrastive_margin=args.contrastive_margin,
+        orthogonal_target=args.orthogonal_target
     )
     
     # 优化器（仅 LAP 参数）
@@ -430,11 +431,11 @@ def main():
     # 训练历史
     history = {
         'train_loss': [],
-        'train_loss_pos': [],
-        'train_loss_neg': [],
+        'train_sim_good': [],
+        'train_sim_bad': [],
         'val_loss': [],
-        'val_loss_pos': [],
-        'val_loss_neg': []
+        'val_sim_good': [],
+        'val_sim_bad': []
     }
     
     best_val_loss = float('inf')
@@ -459,16 +460,17 @@ def main():
         
         # 记录历史
         history['train_loss'].append(train_metrics['loss'])
-        history['train_loss_pos'].append(train_metrics['loss_pos'])
-        history['train_loss_neg'].append(train_metrics['loss_neg'])
+        history['train_sim_good'].append(train_metrics['sim_good_mean'])
+        history['train_sim_bad'].append(train_metrics['sim_bad_mean'])
         history['val_loss'].append(val_metrics['loss'])
-        history['val_loss_pos'].append(val_metrics['loss_pos'])
-        history['val_loss_neg'].append(val_metrics['loss_neg'])
+        history['val_sim_good'].append(val_metrics['sim_good_mean'])
+        history['val_sim_bad'].append(val_metrics['sim_bad_mean'])
         
         print(f"Train Loss: {train_metrics['loss']:.4f} "
-              f"(Pos: {train_metrics['loss_pos']:.4f}, Neg: {train_metrics['loss_neg']:.4f})")
+              f"(sim_good: {train_metrics['sim_good_mean']:.4f}, sim_bad: {train_metrics['sim_bad_mean']:.4f})")
         print(f"Val Loss: {val_metrics['loss']:.4f} "
-              f"(Pos: {val_metrics['loss_pos']:.4f}, Neg: {val_metrics['loss_neg']:.4f})")
+              f"(sim_good: {val_metrics['sim_good_mean']:.4f}, sim_bad: {val_metrics['sim_bad_mean']:.4f})")
+        print(f"  → 目标: sim_good < 0.65, sim_bad > 0.80")
         
         # Early stopping
         if val_metrics['loss'] < best_val_loss:

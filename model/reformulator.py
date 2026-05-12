@@ -7,15 +7,18 @@ DSCLR Query Reformulator Module
 import os
 import json
 import logging
-import hashlib
 from typing import Tuple, Optional, Dict, List, Any
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-e76614db92844a68bb36956b1e445c42")
+DEFAULT_PROMPT_VERSION = "v4"
 
-SYSTEM_PROMPT = """You are an expert Information Retrieval (IR) query optimizer for Dense Vector Models.
+# 这里解锁APIkey
+# API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-961483e59c904f65b619248417e0a06c")
+
+SYSTEM_PROMPT_V4 = """You are an expert Information Retrieval (IR) query optimizer for Dense Vector Models.
 Your task is to decouple a user's "Original Query" and complex "Instruction" into two concise, NATURAL LANGUAGE representations: Q_plus and Q_minus.
 
 ⚠️ CRITICAL RULES FOR Q_plus (Positive Intent):
@@ -30,7 +33,7 @@ Your task is to decouple a user's "Original Query" and complex "Instruction" int
 3. If no explicit exclusion exists, output exactly "[NONE]".
 
 ⚠️ CRITICAL RULES FOR Q_minus (The "No-Negation" Rule):
-1. DENSE RETRIEVERERS DO NOT UNDERSTAND LOGIC WORDS. You MUST NOT use negation words in Q_minus (e.g., "no", "not", "non-", "without", "outside", "other than").
+1. DENSE RETRIEVERS DO NOT UNDERSTAND LOGIC WORDS. You MUST NOT use negation words in Q_minus (e.g., "no", "not", "non-", "without", "outside", "other than").
 2. Convert logical negations into AFFIRMATIVE ENTITIES.
    - BAD: "non-United Kingdom" -> GOOD: "United States, France, global"
    - BAD: "violence outside Ireland" -> GOOD: "violence in England, international violence"
@@ -89,11 +92,30 @@ Output:
 
 Output in English."""
 
-USER_PROMPT_TEMPLATE = """Please analyze and decouple the following Query and Instruction:
+USER_PROMPT_TEMPLATE_V4 = """
+请深吸一口气，运用你严密的逻辑分析能力，对以下 Query 和 Instruction 进行抽取式提纯解耦：
 
+输入:
 Query: "{query}"
 Instruction: "{instruction}"
 """
+
+PROMPT_LIBRARY = {
+    "v4": {
+        "system": SYSTEM_PROMPT_V4,
+        "user_template": USER_PROMPT_TEMPLATE_V4,
+    }
+}
+
+
+def get_prompt_templates(prompt_version: str) -> Tuple[str, str]:
+    """根据版本号返回 system prompt 和 user prompt template。"""
+    version = (prompt_version or DEFAULT_PROMPT_VERSION).lower()
+    if version not in PROMPT_LIBRARY:
+        available = ", ".join(sorted(PROMPT_LIBRARY.keys()))
+        raise ValueError(f"不支持的 prompt_version: {prompt_version}. 可用版本: {available}")
+    prompt_conf = PROMPT_LIBRARY[version]
+    return prompt_conf["system"], prompt_conf["user_template"]
 
 
 DEFAULT_MAX_RETRIES = 3
@@ -114,6 +136,7 @@ def call_llm_api(
     query: str,
     instruction: str,
     api_key: str = API_KEY,
+    prompt_version: str = DEFAULT_PROMPT_VERSION,
     max_retries: int = DEFAULT_MAX_RETRIES,
     initial_delay: float = DEFAULT_INITIAL_DELAY,
     max_delay: float = DEFAULT_MAX_DELAY,
@@ -127,6 +150,7 @@ def call_llm_api(
         query: 查询文本
         instruction: 指令文本
         api_key: API 密钥
+        prompt_version: 提示词版本，默认使用 v4
         max_retries: 最大重试次数
         initial_delay: 初始重试延迟（秒）
         max_delay: 最大重试延迟（秒）
@@ -141,8 +165,10 @@ def call_llm_api(
     """
     from utils.call_llm.call_deepseek import call_deepseek
     import time
+
+    system_prompt, user_prompt_template = get_prompt_templates(prompt_version)
     
-    user_prompt = USER_PROMPT_TEMPLATE.format(
+    user_prompt = user_prompt_template.format(
         query=query,
         instruction=instruction
     )
@@ -154,7 +180,7 @@ def call_llm_api(
         try:
             result_text = call_deepseek(
                 api_key=api_key,
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 is_json=True,
                 temperature=0.1
@@ -180,6 +206,9 @@ def call_llm_api(
             parsed_json = json.loads(result_text)
             q_plus = parsed_json.get("Q_plus", "")
             q_minus = parsed_json.get("Q_minus", "[NONE]")
+
+            if not q_plus:
+                q_plus = query
             
             if attempt > 1:
                 logger.info(f"API 调用成功 (重试 {attempt - 1} 次后)")
@@ -266,9 +295,10 @@ class DualQueryCache:
                     item = json.loads(line)
                     qid = item.get('qid')
                     query_type = item.get('query_type', 'og')
+                    prompt_version = item.get('prompt_version', 'legacy')
                     if qid:
-                        # 使用与查找时一致的键格式: f"{qid}_{query_type}"
-                        cache_key = f"{qid}_{query_type}"
+                        # 使用与查找时一致的键格式: f"{qid}_{query_type}_{prompt_version}"
+                        cache_key = f"{qid}_{query_type}_{prompt_version}"
                         cache_data[cache_key] = item
         
         logger.info(f"✅ 已加载 {len(cache_data)} 条缓存 (task: {task_name})")
@@ -341,6 +371,7 @@ class QueryReformulator:
         api_key: str = API_KEY,
         use_cache: bool = True,
         cache_dir: str = "dataset/FollowIR_test/dual_queries_v4",
+        prompt_version: str = DEFAULT_PROMPT_VERSION,
         max_retries: int = DEFAULT_MAX_RETRIES,
         initial_delay: float = DEFAULT_INITIAL_DELAY,
         max_delay: float = DEFAULT_MAX_DELAY,
@@ -355,6 +386,7 @@ class QueryReformulator:
             api_key: DeepSeek API 密钥
             use_cache: 是否使用缓存
             cache_dir: 缓存目录
+            prompt_version: 提示词版本，默认 v4
             max_retries: 最大重试次数
             initial_delay: 初始重试延迟（秒）
             max_delay: 最大重试延迟（秒）
@@ -364,6 +396,7 @@ class QueryReformulator:
         self.task_name = task_name
         self.api_key = api_key
         self.use_cache = use_cache
+        self.prompt_version = (prompt_version or DEFAULT_PROMPT_VERSION).lower()
         self.cache = DualQueryCache(cache_dir)
         self._cache_data: Dict[str, Dict] = {}
         
@@ -452,6 +485,7 @@ class QueryReformulator:
             "query": query,
             "instruction": instruction,
             "query_type": query_type,
+            "prompt_version": self.prompt_version,
             "q_plus": q_plus,
             "q_minus": q_minus,
             "created_at": datetime.now().isoformat()
@@ -478,7 +512,7 @@ class QueryReformulator:
         Returns:
             (Q_plus, Q_minus) 元组
         """
-        cache_key = f"{qid}_{query_type}"
+        cache_key = f"{qid}_{query_type}_{self.prompt_version}"
         
         if self.use_cache and cache_key in self._cache_data:
             record = self._cache_data[cache_key]
@@ -490,6 +524,7 @@ class QueryReformulator:
         try:
             q_plus, q_minus = call_llm_api(
                 query, instruction, self.api_key,
+                prompt_version=self.prompt_version,
                 max_retries=self.max_retries,
                 initial_delay=self.initial_delay,
                 max_delay=self.max_delay,
@@ -527,13 +562,13 @@ class QueryReformulator:
             queries: [(qid, idx, query, instruction, query_type), ...]
             
         Returns:
-            {f"{qid}_{query_type}": (Q_plus, Q_minus), ...}
+            {f"{qid}_{query_type}_{prompt_version}": (Q_plus, Q_minus), ...}
         """
         results = {}
         to_api_call = []
         
         for qid, idx, query, instruction, query_type in queries:
-            cache_key = f"{qid}_{query_type}"
+            cache_key = f"{qid}_{query_type}_{self.prompt_version}"
             
             if self.use_cache and cache_key in self._cache_data:
                 record = self._cache_data[cache_key]
@@ -546,11 +581,14 @@ class QueryReformulator:
             
             new_records = []
             for qid, idx, query, instruction, query_type in to_api_call:
-                retry_callback = lambda attempt, error: self._on_retry(f"{qid}_{query_type}", attempt, error)
+                retry_callback = lambda attempt, error: self._on_retry(
+                    f"{qid}_{query_type}_{self.prompt_version}", attempt, error
+                )
                 
                 try:
                     q_plus, q_minus = call_llm_api(
                         query, instruction, self.api_key,
+                        prompt_version=self.prompt_version,
                         max_retries=self.max_retries,
                         initial_delay=self.initial_delay,
                         max_delay=self.max_delay,
@@ -570,7 +608,7 @@ class QueryReformulator:
                     )
                     q_plus, q_minus = query, "[NONE]"
                 
-                cache_key = f"{qid}_{query_type}"
+                cache_key = f"{qid}_{query_type}_{self.prompt_version}"
                 results[cache_key] = (q_plus, q_minus)
                 
                 if self.use_cache:
@@ -580,14 +618,15 @@ class QueryReformulator:
             if self.use_cache and new_records:
                 self.cache.save_batch(self.task_name, new_records)
                 for record in new_records:
-                    cache_key = f"{record['qid']}_{record['query_type']}"
+                    pver = record.get('prompt_version', self.prompt_version)
+                    cache_key = f"{record['qid']}_{record['query_type']}_{pver}"
                     self._cache_data[cache_key] = record
         
         return results
     
     def get_cached(self, qid: str, query_type: str = "og") -> Optional[Tuple[str, str]]:
         """获取缓存的查询结果"""
-        cache_key = f"{qid}_{query_type}"
+        cache_key = f"{qid}_{query_type}_{self.prompt_version}"
         if cache_key in self._cache_data:
             record = self._cache_data[cache_key]
             return (record['q_plus'], record['q_minus'])
@@ -595,7 +634,7 @@ class QueryReformulator:
     
     def has_cache(self, qid: str, query_type: str = "og") -> bool:
         """检查是否有缓存"""
-        cache_key = f"{qid}_{query_type}"
+        cache_key = f"{qid}_{query_type}_{self.prompt_version}"
         return cache_key in self._cache_data
     
     def get_cache_stats(self) -> Dict[str, int]:
@@ -614,7 +653,8 @@ class QueryReformulator:
 def get_reformulator(
     task_name: str = "Core17InstructionRetrieval",
     api_key: str = API_KEY,
-    use_cache: bool = True
+    use_cache: bool = True,
+    prompt_version: str = DEFAULT_PROMPT_VERSION
 ) -> QueryReformulator:
     """
     获取查询重构器的便捷函数
@@ -622,7 +662,8 @@ def get_reformulator(
     return QueryReformulator(
         task_name=task_name,
         api_key=api_key,
-        use_cache=use_cache
+        use_cache=use_cache,
+        prompt_version=prompt_version
     )
 
 

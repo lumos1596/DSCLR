@@ -40,7 +40,7 @@ USE_MLP=false
 # 模型路径配置（根据上面的开关设置）
 # ============================================================
 # LAP 模型路径（USE_LAP=true 时需要）
-LAP_MODEL_PATH=""
+LAP_MODEL_PATH="train/output/Hybrid/4.3lap新损失测试/lap_only/4.4-2200-fully-adaptive/deir_best_lap_only.pt"
 # MLP 模型路径（USE_MLP=true 时需要）
 MLP_MODEL_PATH=""
 # MLP 隐藏层维度
@@ -65,10 +65,10 @@ elif [ "$ENCODER_TYPE" = "bge" ]; then
     EMBED_DIM=1024
     MODEL_SHORT="bge-large-en"
 elif [ "$ENCODER_TYPE" = "repllama" ]; then
-    MODEL_NAME="castorini/repllama-v1-7b-lora-passage"
-    BATCH_SIZE=28
+    MODEL_NAME="samaya-ai/RepLLaMA-reproduced"
+    BATCH_SIZE=8
     EMBED_DIM=4096
-    MODEL_SHORT="repllama-v1-7b"
+    MODEL_SHORT="repllama-reproduced"
 else
     echo "错误: 未知的编码器类型 '$ENCODER_TYPE'"
     echo "支持的类型: bge, mistral, repllama"
@@ -88,12 +88,12 @@ TAUS="0.5,0.6,0.7,0.8,0.9,0.95"
 NUM_SAMPLES=15  # 随机抽样的参数组合数量
 
 # 实验备注
-EXPERIMENT_NOTE="尝试基础分修改为指令直接匹配"
+EXPERIMENT_NOTE="LAP模块评估: 完全自适应版本, sim_good=0.537, sim_bad=0.614, 动态目标=0.455"
 
 # ============================================================
 # 自定义输出路径配置（直接修改此变量即可覆盖自动生成的路径）
 # ============================================================
-CUSTOM_OUTPUT_DIR="/home/luwa/Documents/DSCLR/evaluation/dsclr/grid_search/3.31测试修改基准分计算"
+CUSTOM_OUTPUT_DIR="/home/luwa/Documents/DSCLR/evaluation/dsclr/grid_search/repllama-reproduced-max2600/Core17"
 # 示例: CUSTOM_OUTPUT_DIR="/home/luwa/Documents/DSCLR/evaluation/dsclr/grid_search/my_experiment"
 
 # 输出路径

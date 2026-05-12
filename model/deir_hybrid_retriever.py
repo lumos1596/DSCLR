@@ -53,7 +53,8 @@ class DeIR_HybridRetriever(nn.Module):
         use_mlp: bool = False,
         static_alpha: float = 1.0,
         static_tau: float = 0.5,
-        encoder_type: str = 'bge'
+        encoder_type: str = 'bge',
+        lap_rank: int = 256
     ):
         super().__init__()
         self.encoder = encoder
@@ -68,8 +69,8 @@ class DeIR_HybridRetriever(nn.Module):
         # ========== LAP 模块（表示层投影）==========
         # 任务：把 Q- 投影到"负向空间"，使其远离好文档、靠近踩雷文档
         if self.use_lap:
-            self.lap = LAPProjection(hidden_dim=hidden_dim)
-            print(f"✅ LAP 模块已启用: hidden_dim={hidden_dim}")
+            self.lap = LAPProjection(hidden_dim=hidden_dim, rank=lap_rank)
+            print(f"✅ LAP 模块已启用: hidden_dim={hidden_dim}, rank={lap_rank}")
         else:
             self.lap = None
             print(f"⚠️ LAP 模块已禁用")
@@ -77,7 +78,7 @@ class DeIR_HybridRetriever(nn.Module):
         # ========== MLP 模块（打分层动态预测）==========
         # 任务：动态预测惩罚系数 (alpha, tau)
         if self.use_mlp:
-            self.mlp = DSCLR_MLP(hidden_dim=hidden_dim)
+            self.mlp = DSCLR_MLP(input_dim=hidden_dim, hidden_dim=256)
             print(f"✅ MLP 模块已启用")
         else:
             self.mlp = None
