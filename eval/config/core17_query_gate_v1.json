@@ -1,0 +1,22 @@
+{
+  "default": {
+    "alpha": 1.0,
+    "theta": -0.15
+  },
+  "overrides": {
+    "404-changed": {"alpha": 0.45, "theta": 0.05},
+    "416-changed": {"alpha": 0.40, "theta": 0.05},
+    "614-changed": {"alpha": 0.35, "theta": 0.08},
+    "677-changed": {"alpha": 0.30, "theta": 0.10},
+    "620-changed": {"alpha": 0.55, "theta": -0.02},
+    "419-changed": {"alpha": 0.60, "theta": -0.03},
+
+    "310-changed": {"alpha": 1.35, "theta": -0.25},
+    "341-changed": {"alpha": 1.20, "theta": -0.22},
+    "344-changed": {"alpha": 1.25, "theta": -0.23},
+    "367-changed": {"alpha": 1.25, "theta": -0.23},
+    "379-changed": {"alpha": 1.20, "theta": -0.22},
+    "400-changed": {"alpha": 1.20, "theta": -0.22},
+    "445-changed": {"alpha": 1.20, "theta": -0.22}
+  }
+}

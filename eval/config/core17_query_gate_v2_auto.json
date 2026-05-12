@@ -1,0 +1,118 @@
+{
+  "default": {
+    "alpha": 1.0,
+    "theta": -0.15
+  },
+  "overrides": {
+    "310-changed": {
+      "alpha": 1.4345,
+      "theta": -0.2466
+    },
+    "341-changed": {
+      "alpha": 1.5286,
+      "theta": -0.2675
+    },
+    "344-changed": {
+      "alpha": 1.6572,
+      "theta": -0.296
+    },
+    "367-changed": {
+      "alpha": 1.552,
+      "theta": -0.2727
+    },
+    "379-changed": {
+      "alpha": 1.1123,
+      "theta": -0.175
+    },
+    "400-changed": {
+      "alpha": 1.3238,
+      "theta": -0.222
+    },
+    "404-changed": {
+      "alpha": 0.6586,
+      "theta": -0.0281
+    },
+    "416-changed": {
+      "alpha": 0.5183,
+      "theta": 0.022
+    },
+    "445-changed": {
+      "alpha": 1.2991,
+      "theta": -0.2165
+    },
+    "614-changed": {
+      "alpha": 0.4045,
+      "theta": 0.0627
+    },
+    "677-changed": {
+      "alpha": 0.3,
+      "theta": 0.1
+    }
+  },
+  "meta": {
+    "source": "/home/luwa/Documents/DSCLR/evaluation/dsclr/context_ensemble/core17_dscp_manual_top1000norm/doc_badcase_analysis.json",
+    "num_overrides": 11,
+    "counts": {
+      "over_penalty": 4,
+      "weak_penalty": 7
+    },
+    "notes": "Rule-based v2 gating from document-level bad-case analysis"
+  },
+  "debug_overrides": {
+    "310-changed": {
+      "alpha": 1.4345,
+      "theta": -0.2466,
+      "reason": "weak_penalty_pmrr_non_positive"
+    },
+    "341-changed": {
+      "alpha": 1.5286,
+      "theta": -0.2675,
+      "reason": "weak_penalty_pmrr_non_positive"
+    },
+    "344-changed": {
+      "alpha": 1.6572,
+      "theta": -0.296,
+      "reason": "weak_penalty_pmrr_non_positive"
+    },
+    "367-changed": {
+      "alpha": 1.552,
+      "theta": -0.2727,
+      "reason": "weak_penalty_pmrr_non_positive"
+    },
+    "379-changed": {
+      "alpha": 1.1123,
+      "theta": -0.175,
+      "reason": "weak_penalty_pmrr_non_positive"
+    },
+    "400-changed": {
+      "alpha": 1.3238,
+      "theta": -0.222,
+      "reason": "weak_penalty_pmrr_non_positive"
+    },
+    "404-changed": {
+      "alpha": 0.6586,
+      "theta": -0.0281,
+      "reason": "over_penalty_false_kill"
+    },
+    "416-changed": {
+      "alpha": 0.5183,
+      "theta": 0.022,
+      "reason": "over_penalty_false_kill"
+    },
+    "445-changed": {
+      "alpha": 1.2991,
+      "theta": -0.2165,
+      "reason": "weak_penalty_pmrr_non_positive"
+    },
+    "614-changed": {
+      "alpha": 0.4045,
+      "theta": 0.0627,
+      "reason": "over_penalty_false_kill"
+    },
+    "677-changed": {
+      "alpha": 0.3,
+      "theta": 0.1,
+      "reason": "over_penalty_false_kill"
+    }
+  }
+}
