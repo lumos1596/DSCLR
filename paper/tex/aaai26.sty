@@ -1,0 +1,90 @@
+% ============================================================
+% aaai26.sty — AAAI 格式占位文件
+% ============================================================
+% 注意：这是占位文件，实际编译前需要从官方下载最新的 aaai26.sty
+%
+% 下载方式（任选一种）：
+% 1. 访问 https://github.com/aaai/aaai-template 下载最新模板
+% 2. 访问 https://aaai.org/conference/aaai/aaai-instructions-for-authors/
+%    下载 Author Kit（包含 .sty 和 .cls 文件）
+% 3. 从 AAAI OJS 系统下载：https://ojs.aaai.org/index.php/AAAI/
+%
+% 将下载的 aaai26.sty 替换本文件即可编译。
+% ============================================================
+
+\ProvidesPackage{aaai26}[2026/01/01 AAAI 2026/2027 Format Placeholder]
+
+% 基本设置：双栏、letterpaper
+\RequirePackage{geometry}
+\geometry{letterpaper, margin=1in, top=0.8in, bottom=0.8in}
+\setlength{\columnsep}{0.25in}
+
+% 字体设置
+\RequirePackage{times}
+\RequirePackage{helvet}
+\RequirePackage{courier}
+
+% 数学和表格
+\RequirePackage{amsmath}
+\RequirePackage{amssymb}
+\RequirePackage{booktabs}
+
+% 图片
+\RequirePackage{graphicx}
+
+% 超链接
+\RequirePackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  citecolor=blue,
+  urlcolor=blue,
+  pdfborder={0 0 0}
+}
+
+% 段落设置
+\setlength{\parskip}{0pt}
+\setlength{\parindent}{1em}
+
+% 标题样式
+\renewcommand{\section}{\@startsection{section}{1}{\z@}
+  {-3.5ex plus -1ex minus -.2ex}
+  {2.3ex plus.2ex}
+  {\normalfont\large\bfseries}}
+
+\renewcommand{\subsection}{\@startsection{subsection}{2}{\z@}
+  {-3.25ex plus -1ex minus -.2ex}
+  {1.5ex plus.2ex}
+  {\normalfont\normalsize\bfseries}}
+
+\renewcommand{\subsubsection}{\@startsection{subsubsection}{3}{\z@}
+  {-3.25ex plus -1ex minus -.2ex}
+  {1.5ex plus.2ex}
+  {\normalfont\normalsize\itshape}}
+
+% 页眉页脚
+\pagestyle{plain}
+
+% maketitle 占位
+\renewcommand{\maketitle}{
+  \begin{center}
+    {\Large\bfseries \@title}\\[1ex]
+    \@author\\[1ex]
+    \@date
+  \end{center}
+  \vspace{1em}
+}
+
+% abstract 环境
+\renewenvironment{abstract}{
+  \begin{center}\textbf{Abstract}\end{center}
+  \begin{quote}\small
+}{
+  \end{quote}
+}
+
+% 参考文献样式
+% Bibliography style (placeholder - replace with official aaai.bst)
+% \bibliographystyle{plain} works with standard LaTeX
+
+\endinput

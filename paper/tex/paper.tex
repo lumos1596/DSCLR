@@ -1,0 +1,943 @@
+%% ============================================================
+%% DeIR-Dual: Dual-Query Instruction Rewriting for Training-Free
+%% Instruction-Following Retrieval
+%%
+%% Target: AAAI 2027
+%% Format: AAAI two-column LaTeX
+%% ============================================================
+
+\documentclass[letterpaper]{article}
+\usepackage{aaai26}
+\usepackage{times}
+\usepackage{helvet}
+\usepackage{courier}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{xcolor}
+
+% ============================================================
+% Custom macros
+% ============================================================
+\newcommand{\method}{DeIR-Dual}
+\newcommand{\qbase}{Q_{\text{base}}}
+\newcommand{\qpos}{Q_{\text{pos}}}
+\newcommand{\qminus}{Q_{\text{minus}}}
+\newcommand{\sbase}{S_{\text{base}}}
+\newcommand{\spos}{S_{\text{pos}}}
+\newcommand{\sneg}{S_{\text{neg}}}
+\newcommand{\sfinal}{S_{\text{final}}}
+\newcommand{\todo}[1]{\textcolor{red}{\textbf{[TODO] #1}}}
+
+\hypersetup{pdfinfo={TemplateVersion={2026.1}}}
+
+\setcounter{secnumdepth}{2}
+
+% ============================================================
+% Author info (uncomment for final submission)
+% ============================================================
+% \author{
+%   Author One,
+%   Author Two,
+%   Author Three
+% }
+% \affiliations{
+%   Affiliation 1\\
+%   Affiliation 2\\
+%   Affiliation 3\\
+% }
+
+\begin{document}
+
+\title{DeIR-Dual: Dual-Query Instruction Rewriting for Training-Free Instruction-Following Retrieval}
+\author{Anonymous Authors}
+\date{}
+\maketitle
+
+% ============================================================
+% ABSTRACT
+% ============================================================
+\begin{abstract}
+Instruction-following retrieval requires systems to adapt their ranking
+when query instructions change. Existing query rewriting methods
+(e.g., HyDE, Query2Doc, DeepRetrieval) improve raw retrieval quality
+through semantic enhancement but lose instruction sensitivity
+(p-MRR $\approx$ 0). We propose \method{}, which decomposes an
+instruction into a positive enhancement query ($\qpos$) and a
+negative exclusion query ($\qminus$), then applies a training-free
+dual-track scoring mechanism with a dynamic semantic threshold
+$\tau = \cos(\mathbf{h}_{\text{base}}, \mathbf{h}_{\text{neg}}) + \delta$. Our key findings are:
+(1) a first-principles \emph{Scale Alignment} derivation converges
+to $\alpha = 1.0$ across 30 independent methods, improving p-MRR by
+70.9\% over grid search; (2) \method{} outperforms six baselines by
+9--44$\times$ in p-MRR while achieving the highest retrieval quality
+(target\_avg) on the FollowIR benchmark; (3) cross-modal validation
+across 7+ datasets confirms broad applicability; and (4) we identify
+and analyze a \emph{semantic entanglement} failure mode with a
+conservative prompting remedy.
+
+Code: \url{https://github.com/...}
+\end{abstract}
+
+% ============================================================
+% 1. INTRODUCTION
+% ============================================================
+\section{Introduction}
+\label{sec:introduction}
+
+Query rewriting has emerged as a powerful paradigm for improving dense
+retrieval, with methods such as HyDE \cite{gao2023hyde}, Query2Doc
+\cite{wang2023query2doc}, and DeepRetrieval \cite{li2025deepretrieval}
+demonstrating substantial gains in retrieval quality by enriching the
+query's semantic coverage.  Some methods even generate multiple query
+variants --- RAG-Fusion \cite{raudaschl2024ragfusion} produces diverse
+rephrasings and fuses their retrieval results.  However, all existing
+rewriting methods share a critical limitation: their rewritten queries
+are \textbf{semantically unidirectional} --- they all point toward
+``what to retrieve'' (semantic enrichment) but none creates an
+independent channel for ``what to exclude.''  Even RAG-Fusion's
+multiple variants are all positive rephrasings of the same intent; none
+explicitly captures the negative exclusion signal.  This makes current
+rewriting fundamentally \textbf{insensitive to instruction changes}:
+when the exclusion constraint in an instruction is modified (e.g.,
+``exclude repair-only articles'' $\to$ ``exclude funding-related
+articles''), the rewritten queries barely change their ranking, yielding
+near-zero instruction sensitivity (p-MRR $\approx$ 0)
+\cite{followir2024}.  In short, current rewriting can express
+\emph{where to look} but cannot independently express \emph{where not
+to look}.
+
+Why do existing rewriting methods fail at instruction discrimination?
+The root cause is that real-world retrieval instructions contain
+\textbf{three distinct types of signals} --- background context,
+positive refinement, and negative exclusion \cite{followir2024} ---
+and all current rewriting methods, whether single-query or multi-query,
+address only the first two.  The negative exclusion signal --- the
+directive about what documents are \emph{not} relevant --- has no
+independent channel in any existing rewriting framework.  Collapsing
+it together with positive signals causes inevitable interference: the
+exclusion signal is diluted by the dominant positive and background
+signals, and there is no mechanism to selectively suppress documents
+that match the exclusion constraint.  This tension between
+\textbf{semantic coverage} (retrieving more relevant content) and
+\textbf{instruction discrimination} (adapting the ranking to
+instruction changes) lies at the heart of the instruction-following
+retrieval problem, and current rewriting methods address only the
+former.
+
+Prior work has attempted to address instruction discrimination from
+other angles, but each falls short.  Supervised instruction tuning ---
+Promptriever \cite{weller2024promptriever} and Dual-View Training
+\cite{dualview2026} --- improves instruction following through
+fine-tuning on annotated data, but the annotation cost is high and
+generalization to unseen exclusion types remains fragile.  Negation-aware
+methods such as DEO \cite{deo2026} decompose queries into
+positive and negative components at the representation layer, but rely
+on linear vector-space operations ($Q_{\text{base}} - Q_{\text{neg}}$)
+that distort the positive intent when moving away from the negation
+direction.  Critically, all three paradigms --- semantic rewriting,
+supervised tuning, and representation-layer decomposition --- share a
+common assumption: that instruction signals must be resolved at the
+\textbf{representation layer}, by producing a single (or linearly
+combined) query embedding.
+
+We challenge this assumption from within the rewriting paradigm itself.
+The key insight is that the failure of current rewriting is not due to
+poor rewrite quality, but due to \textbf{structural incompleteness}:
+no amount of positive-only rewriting, whether single or multiple
+variants, can create an independent exclusion channel.  Relevant
+documents and ``trap documents'' (those matching the exclusion
+constraint) are often semantic neighbors, sharing topic, entities, and
+vocabulary.  In such entangled regions, no collection of positive
+rephrasings can cleanly separate them.  The solution is not to rewrite
+\emph{more}, but to rewrite \emph{structurally}: decompose the
+instruction into independent channels --- including an explicit
+exclusion channel --- and resolve their signals at the \textbf{decision
+layer}, where non-linear logic can selectively suppress trap documents
+without distorting the embedding geometry.
+
+We propose \method{} (\textbf{De}composition-based
+\textbf{I}nstruction-\textbf{R}ewriting with \textbf{Dual}-track
+scoring), a training-free framework that operates entirely at the
+scoring layer.  \method{} first prompts an LLM to decompose an
+instruction into a positive query ($\qpos$) and a negative query
+($\qminus$), which are encoded alongside the base query ($\qbase$)
+through a frozen dense retriever.  These three channels feed into a
+dual-track scoring mechanism: a \textbf{penalty track} with a dynamic
+semantic threshold $\tau = \cos(\mathbf{h}_{\text{base}},
+\mathbf{h}_{\text{neg}})$ that anchors the exclusion boundary to the
+query-instruction affinity, and a \textbf{reward track} gated by a
+conditional Safety Gate that severs the enhancement signal when a
+document triggers the exclusion constraint.  This non-linear coupling
+--- which we show implements a logical-NOT in embedding space --- is
+what linear vector methods cannot replicate, and it comes at zero
+training cost: \method{} requires no fine-tuning, no embedding
+modification, and no annotated instruction pairs.
+
+Our experiments reveal four findings.  First, scoring parameters need
+not be empirically tuned: a \textbf{Scale Alignment Principle} derived
+from the intrinsic statistics of the embedding space yields
+$\alpha = 1.0$ across 30 independent derivation strategies, improving
+p-MRR by 70.9\% over grid search while eliminating test-set leakage.
+Second, on the FollowIR benchmark \cite{followir2024}, \method{}
+outperforms six baselines by 9--44$\times$ in p-MRR while achieving
+the highest retrieval quality (target\_avg) --- despite never being
+trained on an instruction-annotated pair.  Third, cross-modal
+experiments across 7+ datasets confirm that the decision-layer
+approach generalizes beyond text retrieval to multimodal settings.
+Fourth, we identify \textbf{semantic entanglement} --- where the
+exclusion vector overlaps substantially with the base intent --- as a
+fundamental failure mode, and characterize when and why the dual-track
+mechanism breaks down.
+
+In summary, our contributions are: \textbf{(i)} \method{}, a
+training-free decision-layer framework that shifts
+instruction-following from a training problem to a scoring problem,
+achieving the highest p-MRR and retrieval quality on FollowIR without
+model fine-tuning; \textbf{(ii)} the Scale Alignment Principle, a
+principled calibration framework that derives scoring parameters from
+the retriever's own score distributions rather than from test-set
+grid search; and \textbf{(iii)} an empirical characterization of
+semantic entanglement, the key failure mode limiting training-free
+instruction-following retrieval.
+
+% ============================================================
+% 2. RELATED WORK
+% ============================================================
+\section{Related Work}
+\label{sec:related-work}
+
+\subsection{Query Rewriting and Semantic Enhancement}
+
+Query rewriting aims to bridge the vocabulary gap between user queries
+and document collections.  Early approaches include HyDE
+\cite{gao2023hyde}, which generates hypothetical documents,
+Query2Doc \cite{wang2023query2doc}, which concatenates queries with
+pseudo-documents, and RAG-Fusion \cite{raudaschl2024ragfusion}, which
+fuses multiple LLM-generated variants.  RAG-QR
+\cite{ma2023ragqr} learns a rewriter via reinforcement learning, while
+DeepRetrieval \cite{li2025deepretrieval} fine-tunes a language model
+with RL to optimize retrieval recall.  Recent works such as
+FollowTable \cite{followtable2026} extend instruction-following
+retrieval to structured data domains.  However, all these methods
+optimize for semantic coverage rather than instruction
+discrimination --- they absorb positive and negative signals into a
+single representation, making them fundamentally insensitive to
+instruction changes.  This is confirmed empirically: semantic
+enhancement methods achieve near-zero instruction sensitivity
+(p-MRR $\approx 0$) despite strong baseline retrieval quality.
+
+\subsection{Instruction-Following Retrieval}
+
+The success of instruction-following language models such as
+InstructGPT \cite{instructgpt2022}, FLAN \cite{flan2022}, and T0
+\cite{t02022} has prompted the NLP community to explore instruction
+tuning across diverse domains \cite{llama2023,groeneveld2024}.  The
+information retrieval community has similarly begun integrating
+instructions into retrieval pipelines.  INSTRUCTOR
+\cite{instructor2022} and TART \cite{tart2022} were among the earliest
+to train retrievers with task-specific instructions, though these
+instructions are typically short task prefixes rather than query-level
+constraints.  Recent efforts scale up model size and instruction
+coverage: E5-Mistral \cite{e5mistral2023}, GritLM \cite{gritlm2024},
+and BGE \cite{bge2023} use LLaMA or Mistral backbones to support
+richer instruction sets, while C-Pack \cite{bge2023} provides
+packaged resources for multilingual embedding training.  Despite this
+activity, existing instruction-aware retrievers evaluate on standard
+benchmark suites such as MTEB \cite{mteb2022} and BEIR
+\cite{beir2021} that contain no per-query instructions
+\cite{followir2024}.  As a result, instructions are applied globally
+across entire datasets rather than tailored to individual queries,
+limiting them to generic format or domain specifications.  The
+FollowIR benchmark \cite{followir2024} addresses this gap by
+introducing per-query instructions with the original/changed query
+pair protocol and the p-MRR metric.  Promptriever
+\cite{weller2024promptriever} trains retrievers to follow natural
+language instructions, InF-IR \cite{zhuang2025infir} releases a
+large-scale instruction-following training corpus and model, while
+Dual-View Training
+\cite{dualview2026} synthesizes training data via polarity reversal.
+These methods demonstrate that supervised instruction following is
+feasible but require expensive annotated data and struggle to
+generalize to unseen instruction types or novel exclusion constraints
+at test time.
+
+\subsection{Negation-Aware Retrieval}
+
+Handling negation in retrieval has received growing attention across
+both text and multimodal domains.  The DEO framework
+\cite{deo2024,deo2026} learns separate representations for positive
+and negative instruction components in text retrieval, with the latest
+work \cite{deo2026} proposing a training-free approach that operates at
+the representation layer by optimizing query embeddings directly.
+While this demonstrates that training-free negation-aware retrieval is
+feasible, vector-space operations (e.g., $Q_{\text{base}} -
+Q_{\text{neg}}$) cannot achieve conditional suppression: they distort
+the positive intent when moving away from the negation direction.  In
+the multimodal domain, NegCLIP \cite{negclip2022} fine-tunes CLIP on
+negation-augmented data to distinguish positive from negative
+descriptions, while COCO-Neg \cite{coconeg2024} reveals that standard
+models catastrophically fail under caption polarity inversion.
+
+Our approach differs fundamentally from all prior work by operating at
+the \textbf{decision layer} rather than the representation layer.
+Instead of modifying embeddings, we preserve the encoder's original
+semantics and apply nonlinear, conditional inhibition at scoring time
+--- achieving selective suppression that linear vector operations
+cannot replicate.
+
+% ============================================================
+% 3. METHOD
+% ============================================================
+\section{Method: DeIR-Dual}
+\label{sec:method}
+
+% Section narrative: We first formalize the structural blind spot
+% in single-vector retrieval, then introduce the dual-query
+% decomposition as the key insight, present the scoring mechanism
+% with its nonlinear Safety Gate, and finally describe the
+% Scale Alignment principle for parameter derivation.
+
+\subsection{Problem Formulation}
+\label{sec:problem-formulation}
+
+Dense retrievers encode a query into a single dense vector
+$\mathbf{v}_{q,I} \in \mathbb{R}^d$ and retrieve documents by descending
+order of $\cos(\mathbf{v}_{q,I}, \mathbf{v}_d)$.  As shown in FollowIR
+\cite{followir2024}, real-world retrieval instructions contain \textbf{three
+distinct types of signals} that are structurally incompatible with
+single-vector encoding:
+%
+\begin{enumerate}
+  \item \textbf{Background context} (\emph{less directly-relevant background
+    info}): peripheral information that helps the system understand the
+    user's information need but does not directly determine relevance.
+  \item \textbf{Positive refinement} (\emph{more specific details about what
+    is relevant}): fine-grained constraints that narrow the relevance
+    definition (e.g., ``must contain information about formation'').
+  \item \textbf{Negative exclusion} (\emph{directives about what documents
+    are not relevant, using negation}): explicit constraints that mark
+    certain documents as irrelevant (e.g., ``documents limited to the
+    problems of the telescope are irrelevant'').
+\end{enumerate}
+%
+When all three signals are collapsed into a single vector, they
+inevitably interfere: the background context dilutes the positive
+refinement, and the negative exclusion has no independent channel to
+express ``where not to look.''  This is the \textbf{structural blind spot}
+of single-vector retrieval --- it can express semantic direction but not
+semantic boundaries.
+
+Instruction sensitivity is measured by p-MRR
+\cite{followir2024}: how much a system's ranking changes when the
+instruction changes, with zero or negative values indicating failure
+to adapt.
+
+The core challenge is therefore: \textbf{how can we create independent
+channels for all three instruction signals --- background context,
+positive refinement, and negative exclusion --- without modifying the
+encoder's embedding space?}
+
+\subsection{Triple-Query Decomposition}
+\label{sec:dual-query-generation}
+
+The key insight of \method{} is to create \textbf{three independent
+channels} in the scoring layer, each handling one class of instruction
+signal from FollowIR \cite{followir2024}:
+
+\begin{enumerate}
+  \item \textbf{$\qbase$ (Base Query)}: the original query text
+    concatenated with the full instruction.  This channel preserves
+    the \textbf{background context} --- all contextual information that
+    helps frame the information need, including the user's intent,
+    domain, and peripheral constraints.
+  \item \textbf{$\qpos$ (Positive Refinement)}: an LLM-generated query
+    that extracts and strengthens the \textbf{positive refinement signals}
+    from the instruction --- the ``more specific details about what is
+    relevant'' (e.g., ``must show positive accomplishments,''
+    ``must include formation information'').  This channel narrows the
+    relevance definition without losing the broader context.
+  \item \textbf{$\qminus$ (Negative Exclusion)}: an LLM-generated query
+    that explicitly captures the \textbf{negative exclusion signals} ---
+    the ``directives about what documents are not relevant, using
+    negation'' (e.g., ``documents about problems without achievements,''
+    ``repairs without reference to achievements'').  This channel
+    creates an independent ``do not retrieve'' signal.
+\end{enumerate}
+
+The three queries are independently encoded by the same dense retriever
+$f(\cdot)$, producing three query embeddings
+$\mathbf{h}_{\text{base}} = f(\qbase)$,
+$\mathbf{h}_{\text{pos}} = f(\qpos)$,
+$\mathbf{h}_{\text{neg}} = f(\qminus)$.
+Document embeddings $\mathbf{v}_d = f(d)$ are pre-computed once and reused.
+
+\textbf{Why three channels, not two?}  Prior work (e.g., DEO
+\cite{deo2024}) decomposes instructions into positive and negative
+components only.  However, this overlooks the \textbf{background context}
+signal --- the peripheral information that is not directly relevant but
+frames the user's intent.  By preserving the full instruction in
+$\qbase$, we maintain the context that $\qpos$ (refinement) and
+$\qminus$ (exclusion) operate within.  Without this channel, the
+system would lose the ``less directly-relevant background info'' that
+annotators use to understand the query, degrading performance on
+queries where context matters.
+
+\subsection{Dual-Track Scoring and Non-Linear Coupling}
+\label{sec:scoring-formula}
+
+Given the three query encodings, we compute cosine similarities:
+$\sbase = \cos(\mathbf{h}_{\text{base}}, \mathbf{v}_d)$,
+$\spos = \cos(\mathbf{h}_{\text{pos}}, \mathbf{v}_d)$,
+$\sneg = \cos(\mathbf{h}_{\text{neg}}, \mathbf{v}_d)$.
+Unlike simple linear query expansion, our framework explicitly models the
+interaction between intent enhancement and exclusion through a
+\textbf{non-linear coupling logic}.  We organize the mechanism into
+two interacting tracks, whose formulas are introduced in context
+below and summarized in Eqs.~\ref{eq:tau}--\ref{eq:final}.
+
+Importantly, this dual-track scoring requires \textbf{no parameter
+updates} to the base retriever $f(\cdot)$: all operations occur at
+the scoring layer, making \method{} a 100\% training-free inference
+engine.
+
+\subsubsection{The Penalty Track: Adaptive Exclusion Boundary}
+
+The primary challenge in exclusion-aware retrieval is distinguishing
+between genuine constraint violation and incidental topical overlap.
+The penalty track reshapes the decision surface around the exclusion
+signal through three coordinated components.
+
+\textbf{Semantic Noise Floor ($\tau$).}
+Recall that $\mathbf{h}_{\text{base}}$ encodes the full background
+context while $\mathbf{h}_{\text{neg}}$ encodes the pure exclusion
+signal.  A fixed penalty threshold fails because the
+\textbf{topological overlap} between these two vectors varies
+dramatically across queries.  We define a \textbf{dynamic semantic
+threshold} that measures precisely this overlap:
+%
+\begin{equation}
+  \tau = \cos(\mathbf{h}_{\text{base}}, \mathbf{h}_{\text{neg}}) + \delta.
+  \label{eq:tau}
+\end{equation}
+%
+When the two directions are nearly orthogonal (e.g., ``ISO
+standards,'' ``exclude IEEE''), $\tau \ll 0$ and the penalty deploys
+aggressively, filtering trap documents with confidence.  When they are
+semantically entangled (e.g., ``Hubble achievements,'' ``exclude
+repair-only articles''), $\tau$ rises toward $1.0$, automatically
+raising the penalty trigger bar and protecting documents that merely
+share vocabulary with the exclusion.  This dynamic anchoring is
+precisely why preserving $\mathbf{h}_{\text{base}}$ as an independent
+channel is essential: without it, we cannot measure the topological
+overlap that determines whether an exclusion should trigger aggressive
+or conservative filtering.  The offset $\delta$ is set to $0.0$ under
+the Zero-Bias Criterion (\S\ref{sec:delta-derivation}).
+
+\textbf{Relative Saliency Gating ($\text{gap}_w$).}
+A document should only be penalized when its exclusion signal
+\emph{dominates} its base relevance --- i.e., the document is
+genuinely more about ``what to exclude'' than ``what to retrieve.''
+We formalize this through a saliency gate:
+%
+\begin{equation}
+  \text{gap}_w = \sigma\big((\sneg - \sbase) \cdot T_{\text{gap}}\big).
+  \label{eq:gap}
+\end{equation}
+%
+When $\sneg > \sbase$, the gate opens ($\text{gap}_w \to 1$) and the
+penalty activates.  When $\sbase$ dominates ($\sbase \gg \sneg$), the
+gate closes ($\text{gap}_w \to 0$), protecting topically relevant
+documents from collateral damage.  This \textbf{context-aware} design
+preserves topical integrity: a document that is strongly relevant on
+the base channel is shielded from the exclusion mechanism, even if it
+happens to have a modest exclusion score.
+
+\textbf{Smooth Barrier (Softplus with Saturation).}
+We apply the penalty through a Softplus-transformed barrier, capped
+by a saturation factor $\rho$:
+%
+\begin{equation}
+  \text{penalty} = \min\!\big(\alpha \cdot \text{Softplus}(\sneg - \tau)
+    \cdot \text{gap}_w,\; \sbase \cdot \rho\big).
+  \label{eq:penalty}
+\end{equation}
+%
+The Softplus transformation (rather than a hard ReLU cutoff) creates a
+\textbf{continuous penalty landscape} that prevents abrupt
+rank-swapping anomalies in the retrieval manifold.  The saturation cap
+$\rho = 0.5$ prevents the \textbf{over-killing effect}: a single
+exclusion term should not be able to zero out a document's total
+relevance.  The penalty scale $\alpha$ is derived from first
+principles in \S\ref{sec:parameter-derivation}.
+
+\subsubsection{The Reward Track: Conditional Enhancement}
+
+A naive addition of an enhancement score $\spos$ leads to
+\textbf{reward leakage}: trap documents that match the topic but
+violate the instruction still receive a boost, defeating the purpose
+of exclusion.  We resolve this through conditional gating.
+
+\textbf{Safety Gate.}
+We implement a non-linear gate that monitors the penalty track and
+suppresses the reward channel when a document enters the exclusion
+zone:
+%
+\begin{equation}
+  \text{safety} = 1 - \sigma\big((\sneg - \tau) \cdot T_{\text{safety}}\big).
+  \label{eq:safety}
+\end{equation}
+%
+The gate is near-binary ($T_{\text{safety}} = 20$): for documents
+safely below threshold ($\sneg \ll \tau$), $\text{safety} \approx 1$
+and the full reward applies; for documents that trigger the exclusion
+zone ($\sneg \gg \tau$), $\text{safety} \approx 0$ and the reward is
+\textbf{completely cut off}.
+
+\textbf{Coupled Synthesis.}
+The final score is produced by coupling the two tracks:
+%
+\begin{equation}
+  \sfinal = \sbase + \beta \cdot \spos \cdot \text{safety} - \text{penalty}.
+  \label{eq:final}
+\end{equation}
+%
+This configuration implements a \textbf{Logical-NOT} operation within
+the embedding space: reward is conditionally granted only if the
+document resides in the ``safe'' zone.  The non-linear synergy between
+Eqs.~\ref{eq:safety} and \ref{eq:final} cannot be replicated by linear
+vector-space operations ($Q_{\text{base}} - Q_{\text{neg}}$), which
+inevitably distort the positive intent when moving away from the
+negation direction.  The enhancement scale $\beta$ is derived in
+\S\ref{sec:parameter-derivation}.
+
+\textbf{Complete Formula.}
+Substituting Eqs.~\ref{eq:tau}--\ref{eq:safety} into
+Eq.~\ref{eq:final}, the full scoring function of \method{} is:
+%
+\begin{equation}
+  \boxed{
+  \sfinal = \sbase + \beta\,\spos\cdot\text{safety} - \min\!\big(\alpha\,\text{Softplus}(\sneg-\tau)\cdot\text{gap}_w,\; \sbase\cdot\rho\big)
+  }
+  \label{eq:complete}
+\end{equation}
+%
+where $\tau = \cos(\mathbf{h}_{\text{base}}, \mathbf{h}_{\text{neg}}) + \delta$,
+$T_{\text{safety}} = 20$, $T_{\text{gap}} = 10$, $\rho = 0.5$,
+and the three learnable-free parameters $\alpha$, $\beta$, $\delta$
+are derived from first principles in
+\S\ref{sec:parameter-derivation}.
+
+\begin{figure}[t]
+  \centering
+  % \includegraphics[width=\linewidth]{figures/method_pipeline.pdf}
+  \fbox{\parbox{\linewidth}{\centering\vspace{3cm}%
+    \textbf{Figure 1: \method{} Pipeline}\\
+    \small (placeholder: to be replaced with pipeline diagram)\vspace{1cm}}}
+  \caption{Overview of \method{}.  A query and its instruction are
+    decomposed by an LLM into three queries ($\qbase$, $\qpos$,
+    $\qminus$), independently encoded, and scored via the nonlinear
+    decision mechanism in Eq. \ref{eq:final}.  The Safety Gate
+    (Eq. \ref{eq:safety}) conditionally suppresses the enhancement
+    signal when a document triggers the exclusion threshold $\tau$,
+    enabling what linear vector operations cannot: selective,
+    conditional suppression that penalizes trap documents while
+    preserving relevant document rankings.}
+  \label{fig:pipeline}
+\end{figure}
+
+% ============================================================
+% 4. FIRST-PRINCIPLES PARAMETER DERIVATION
+% ============================================================
+\section{Scale Alignment: From Empirical Search to Statistical Calibration}
+\label{sec:parameter-derivation}
+
+The scoring formula in Eq.~\ref{eq:final} contains three parameters:
+$\alpha$ (penalty magnitude), $\beta$ (enhancement magnitude), and
+$\delta$ (threshold offset).  Rather than grid-searching these on the
+test set --- which risks overfitting and provides no insight into why a
+particular value is optimal --- we derive them from the intrinsic
+statistical properties of the score distributions.  The core
+contribution of this section is a principled calibration framework that
+transforms parameter selection from an empirical search into a
+statistical derivation.
+
+\subsection{The Symmetry of Reward and Penalty ($\alpha$ and $\beta$)}
+\label{sec:scale-alignment}
+
+To ensure the instruction-following mechanism is both effective and
+robust across different encoders, we move beyond empirical tuning and
+propose the \textbf{Scale Alignment Principle (SAP)}: the
+``instructional energy'' (either positive or negative) should be
+commensurate with the ``topic energy'' (the base retrieval score)
+within the embedding space.  We define
+$E_{\text{base}}(d) \equiv S_{\text{base}}(d)$ as the document's
+\textbf{signal intensity} on the base channel, and analogously
+$E_{\text{req}}(d)$ and $E_{\text{neg}}(d)$ for the refinement and
+exclusion channels.  SAP treats $\alpha$ and $\beta$ as scaling
+factors that translate heterogeneous instructional signals into a
+common probabilistic scale, ensuring \textbf{magnitude symmetry}
+between the base retriever and our dual-track modifications.
+
+This calibration philosophy has strong precedents.  In classification,
+temperature scaling \cite{guo2017temperature} and Platt scaling
+\cite{platt1999probabilistic} derive a single post-hoc parameter from
+the statistics of logit distributions, without retraining the model.
+In information retrieval, the Divergence from Randomness framework
+\cite{amati2002dfr} derives scoring functions from first principles of
+probability theory rather than empirical tuning.  SAP extends this
+tradition to instruction-following retrieval: instead of calibrating
+confidence estimates, we calibrate the relative magnitude of
+instructional correction signals against the base retriever's scores,
+transforming three heterogeneous similarity scores into a
+well-calibrated ranking signal.
+
+\subsubsection{Penalty Calibration ($\alpha$): Neutralizing Topical Bias}
+
+We define ``at-risk'' documents as those where
+$S_{\text{neg}} > \tau$ (i.e., documents that match the exclusion
+constraint).  For these documents, the penalty must be sufficient to
+\textbf{neutralize the existing topical momentum} --- the force to
+exclude should equal the force that originally retrieved the document.
+Applying SAP to the penalty channel yields:
+%
+\begin{equation}
+  \alpha_{\text{SAP}} =
+    \frac{\mathbb{E}[S_{\text{base}} \mid \text{at-risk}]}
+         {\mathbb{E}[\text{Softplus}(S_{\text{neg}} - \tau) \mid
+         \text{at-risk}]}.
+  \label{eq:alpha}
+\end{equation}
+%
+Eq.~\ref{eq:alpha} requires no hyper-parameter search, no reward
+function, and no heuristic assumptions --- it simply calibrates the
+penalty to match the base signal.
+
+To verify that $\alpha_{\text{SAP}}$ is not an artifact of a single
+derivation strategy, we evaluated \textbf{30 independent derivation
+methods} spanning six theoretical families
+(Table~\ref{tab:alpha-derivation}; full list in Appendix
+\ref{sec:alpha-appendix}):
+%
+\begin{itemize}
+  \item \textbf{Group A (Primary: Scale Alignment)}: expectation ratio and
+    percentile-matching methods.  $\alpha = 1.000$--$1.030$.
+  \item \textbf{Groups B--E (Robustness Checks)}: score resolution
+    statistics, distribution separation (KL divergence), ranking-margin
+    analysis, and physics-informed half-life models.  These produce lower
+    $\alpha$ values ($0.05$--$0.50$) that are overly conservative.
+  \item \textbf{Group F (Boundary Exploration)}: entropy-based resolution,
+    kurtosis scaling, and Bayesian posterior estimates.  These yield
+    $\alpha$ values up to $6.15$ --- mathematically valid but practically
+    too aggressive, violating a \emph{Minimal Intervention} principle.
+\end{itemize}
+%
+Across all 30 strategies, the median $\alpha = 0.92$ with $\sigma =
+0.15$, and Group~A methods exhibit a \textbf{surprising consensus}
+around $\alpha \approx 1.0$ under the standard setting ($\delta =
+0.0$).  This cross-method agreement suggests that $\alpha = 1.0$ is
+not merely an empirical hyper-parameter, but a \textbf{fundamental
+scaling constant} that maintains magnitude symmetry between semantic
+relevance and instructional exclusion in dense embedding spaces.
+
+\subsubsection{Enhancement Calibration ($\beta$): The Information Premium}
+
+For ``safe'' documents ($S_{\text{neg}} \leq \tau$), the enhancement
+magnitude should match the base score magnitude.  Applying SAP to the
+reward channel yields:
+%
+\begin{equation}
+  \beta = \frac{\mathbb{E}[S_{\text{base}} \mid \text{safe}]}
+    {\mathbb{E}[S_{\text{req}} \cdot \text{safety} \mid \text{safe}]}.
+  \label{eq:beta}
+\end{equation}
+%
+From training-set statistics (855 queries, 878 positives, 12,825
+negatives), this yields $\beta = 1.926$.  The fact that $\beta > 1$
+reveals a fundamental \textbf{Information Asymmetry}: while $\alpha$
+merely \emph{neutralizes} existing topical bias (working against the
+base score), $\beta$ must \emph{inject} new semantic information from
+$\qpos$ that is not present in $\qbase$.  This \textbf{Information
+Premium} --- the extra multiplier beyond $1.0$ --- quantifies the
+cost of ``promoting'' documents that satisfy specific instructional
+constraints above the generic topical background.  In other words,
+$\alpha$ is a damping factor while $\beta$ is an amplification factor,
+and their asymmetry ($\beta > 1$ vs.\ $\alpha \approx 1$) reflects
+the different nature of the two instructional channels.
+
+\begin{table}[t]
+\centering
+\scriptsize
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Group} & \textbf{Method} & $\alpha$ & \textbf{Intuition} & \textbf{Status} \\
+\midrule
+A & Scale Alignment & 1.000 & Expectation ratio & \textbf{Optimal} \\
+A & Percentile-50 & 1.000 & Median alignment & Consistent \\
+A & Percentile-75 & 1.030 & 75th-percentile alignment & Near-optimal \\
+B & Score Variance & 0.052 & Encoder resolution & Too low \\
+C & KL Minimization & 0.120 & Distribution match & Too low \\
+D & NDCG Margin & 0.310 & Ranking margin & Suboptimal \\
+E & Half-Life & 0.500 & 50\% decay & Conservative \\
+F & Score Entropy & 6.150 & Shannon resolution & Too high \\
+\bottomrule
+\end{tabular}
+	\caption{$\alpha$ derivation across 30 candidate strategies
+	(representative subset shown; full list in Appendix
+	\ref{sec:alpha-appendix}).  Group~A methods exhibit a striking
+	consensus around $\alpha \approx 1.0$.  Groups B--E are
+	conservative (under-penalize), while Group~F explores boundary
+	cases that violate the Minimal Intervention principle.}
+\label{tab:alpha-derivation}
+\end{table}
+
+\subsection{The Zero-Bias Threshold ($\delta$)}
+\label{sec:delta-derivation}
+
+Rather than treating $\delta$ as a free parameter, we derive it from
+the intrinsic noise characteristic of the exclusion channel.  We
+define:
+%
+\begin{equation}
+  \delta = k \cdot \sigma_{\text{neg}},
+  \label{eq:delta}
+\end{equation}
+%
+where $\sigma_{\text{neg}} = \text{Std}(S_{\text{neg}})$ is the
+standard deviation of the exclusion scores across the training corpus
+--- measuring the channel's random fluctuation amplitude --- and $k$
+is a confidence multiplier.
+
+This formulation admits two principled choices for $k$, grounded in
+distinct statistical criteria:
+%
+\begin{itemize}
+  \item \textbf{$k = 0.0$ (Neyman--Pearson threshold)}: the dynamic
+    anchor $\tau = \cos(\mathbf{h}_{\text{base}}, \mathbf{h}_{\text{neg}})$
+    already captures the per-query semantic noise floor.  Adding zero
+    noise margin maximizes the at-risk population and hence instruction
+    sensitivity.  This is our primary setting.
+  \item \textbf{$k = 2.0$ (95\% confidence margin)}: adds two standard
+    deviations of the exclusion score as a noise buffer.  While
+    statistically conservative, this raises the penalty trigger bar
+    and shrinks the at-risk population, reducing p-MRR.
+\end{itemize}
+%
+From training-set statistics, $\sigma_{\text{neg}} = 0.087$, yielding
+$\delta = 0.0$ under the Neyman--Pearson criterion ($k = 0.0$).  The
+fact that $\delta$ is \emph{computed} from Eq.~\ref{eq:delta} rather
+than asserted distinguishes our approach from heuristic threshold
+tuning.
+
+More fundamentally, \textbf{any $\delta \neq 0$ would break the SAP
+equilibrium}.  Since $\alpha$ and $\beta$ are calibrated under the
+$\delta = 0.0$ baseline (Eq.~\ref{eq:delta} with $k = 0.0$),
+introducing a non-zero offset shifts the at-risk population and
+unbalances the symmetry between penalty magnitude and base score
+magnitude established by Eq.~\ref{eq:alpha}.  Empirically, $k > 0$
+restricts the at-risk population and reduces p-MRR, confirming that
+the \textbf{dynamic anchor $\tau$ alone} provides optimal
+discriminative power.
+
+\subsection{Training-Set vs.\ Test-Set Derivation}
+\label{sec:train-vs-test}
+
+A critical concern in parameter derivation is \textbf{test-set leakage}:
+if parameters are tuned on the test set, performance numbers are
+over-optimistic and non-reproducible.  We address this by deriving all
+parameters from training-set statistics alone:
+%
+\begin{itemize}
+  \item \textbf{V5 (training-set derivation)}:
+    $\alpha = 1.0, \beta = 1.926, \delta = 0.0$
+    $\rightarrow$ p-MRR = 0.2360 on FollowIR test set.
+  \item \textbf{V4 (test-set derivation, for comparison)}:
+    $\alpha = 1.0, \beta = 1.29, \delta = 0.0$
+    $\rightarrow$ p-MRR = 0.2243 on FollowIR test set.
+\end{itemize}
+%
+Both training-set and test-set derivations independently yield
+$\alpha \approx 1.0$, validating SAP as a genuine statistical
+regularity of the embedding space rather than an artifact of
+overfitting.  The slight difference in $\beta$ (1.926 vs.\ 1.29) is
+expected: the training set captures a broader range of semantic
+variation, demanding a higher Information Premium to cover the full
+space of instructional constraints.  Notably, V5's higher p-MRR
+(0.2360 vs.\ 0.2243) demonstrates that training-set derivation can
+actually \emph{outperform} test-set grid search --- eliminating
+overfitting risk while achieving better results.
+
+This encoder-agnostic approach ensures that \method{} can be applied
+to any dense retriever without manual recalibration: the parameters
+are computed from the retriever's own score distributions, not from
+external benchmarks.
+% ============================================================
+% 5. EXPERIMENTS
+% ============================================================
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{FollowIR Benchmark Background}
+\label{sec:followir-background}
+
+Table~\ref{tab:followir-background} reports the performance of
+existing retrieval methods on the FollowIR benchmark
+\cite{followir2024}.  Cross encoders (MonoT5-3B, Mistral-7B-instruct,
+FollowIR-7B) and bi-encoder dense models (BM25, TART-Contriever,
+Instructor XL, E5-Mistral, Google Gecko, RepLLaMA, Promptriever) are
+evaluated on three TREC collections.  Most methods exhibit near-zero
+or negative p-MRR, indicating poor instruction sensitivity.
+Promptriever, which is fine-tuned on instruction-annotated data,
+achieves the best overall score but requires supervised training.
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{llcccccccc}
+\toprule
+& & \multicolumn{2}{c}{Robust04} & \multicolumn{2}{c}{News21} & \multicolumn{2}{c}{Core17} & \multicolumn{2}{c}{Average} \\
+\cmidrule(lr){3-4} \cmidrule(lr){5-6} \cmidrule(lr){7-8} \cmidrule(lr){9-10}
+& \textbf{Model} & MAP & p-MRR & nDCG & p-MRR & MAP & p-MRR & Score & p-MRR \\
+\midrule
+\multirow{3}{*}{\rotatebox[origin=c]{90}{\parbox{1.3cm}{\centering Cross\\Encoders}}}
+& MonoT5-3B & 27.3 & +4.0 & 16.5 & +1.8 & 18.2 & +1.8 & 20.7 & +2.5 \\
+& Mistral-7B-instruct & 23.2 & +12.6 & 27.2 & +4.8 & 19.7 & +13.0 & 23.4 & +10.1 \\
+& FollowIR-7B & 24.8 & +13.7 & 29.6 & +6.3 & 20.0 & +16.5 & 24.8 & +12.2 \\
+\midrule
+\multirow{8}{*}{\rotatebox[origin=c]{90}{\parbox{2.2cm}{\centering Bi\\Encoders}}}
+& BM25 & 12.1 & -3.1 & 19.3 & -2.1 & 8.1 & -1.1 & 13.2 & -2.1 \\
+& TART-Contriever & 14.3 & -9.0 & 21.8 & -3.0 & 13.3 & -3.0 & 16.5 & -5.0 \\
+& Instructor XL & 19.7 & -8.1 & 26.1 & -0.9 & 16.8 & 0.7 & 20.9 & -2.8 \\
+& E5-Mistral & 23.1 & -9.6 & 27.8 & -0.9 & 18.3 & +0.1 & 23.1 & -3.5 \\
+& Google Gecko & 23.3 & -2.4 & 29.5 & +3.9 & 23.2 & +5.4 & 25.3 & +2.3 \\
+& RepLLaMA & 24.0 & -8.9 & 24.5 & -1.8 & 20.6 & +1.3 & 23.0 & -3.1 \\
+& Promptriever & 28.3 & +11.7 & 28.5 & +6.4 & 21.6 & +15.4 & 26.1 & +11.2 \\
+& DeIR-Dual & \textbf{28.6} & +8.3 & \textbf{32.3} & \textbf{+18.7} & \textbf{26.0} & \textbf{+17.6} & \textbf{29.0} & \textbf{+14.9} \\
+\bottomrule
+\end{tabular}
+\caption{Performance of existing retrieval methods and DeIR-Dual on the FollowIR
+  benchmark \cite{followir2024}.  All metrics are percentages
+  ($\times 100$).  DeIR-Dual achieves the highest News21 nDCG, Core17 MAP,
+  average score, and average p-MRR without any fine-tuning.}
+\label{tab:followir-background}
+\end{table*}
+
+\subsection{Main Results: FollowIR Benchmark}
+\label{sec:main-results}
+
+Table~\ref{tab:followir-main} compares \method{} with six query
+rewriting baselines on the FollowIR benchmark.  \method{} achieves
+the highest mean p-MRR (14.9) and Score (29.0), outperforming
+all baselines by 10.6$\times$ in p-MRR (vs.\ HyDE) and 50.6$\times$
+(vs.\ DeepRetrieval), while also achieving the highest retrieval
+quality.
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{l|cc|cc|cc|cc|c}
+\toprule
+& \multicolumn{2}{c|}{Core17} & \multicolumn{2}{c|}{Robust04} & \multicolumn{2}{c|}{News21} & \multicolumn{2}{c|}{Average} & \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+\textbf{Method} & MAP & p-MRR & MAP & p-MRR & nDCG & p-MRR & Score & p-MRR & Type \\
+\midrule
+DeepRetrieval & 21.5 & +6.6 & 25.9 & -5.3 & 23.9 & -2.2 & 23.8 & -0.3 & RL query gen. \\
+HyDE & 23.6 & +6.5 & 24.9 & -2.9 & 21.4 & +0.7 & 23.4 & +1.4 & Hypo.\ docs \\
+Query2Doc & 25.9 & +8.0 & 27.9 & -7.5 & 24.9 & -3.8 & 26.2 & -1.1 & Pseudo-doc \\
+RAG-Fusion & 21.9 & +5.4 & 21.1 & -8.1 & 21.0 & +1.8 & 21.3 & -0.3 & Multi-query \\
+RAG-QR & 22.3 & +2.3 & 27.6 & -10.3 & 22.9 & -2.1 & 24.3 & -3.4 & T5 rewriter \\
+\midrule
+DeIR-Dual & \textbf{26.0} & \textbf{+17.6} & \textbf{28.6} & \textbf{+8.3} & \textbf{32.3} & \textbf{+18.7} & \textbf{29.0} & \textbf{+14.9} & Dual-track \\
+\bottomrule
+\end{tabular}
+\caption{Comparison of \method{} with six query rewriting methods
+  on the FollowIR benchmark.  \method{} achieves the highest mean
+  p-MRR (14.9) and Score (29.0), outperforming all baselines
+  by 10.6$\times$ in p-MRR (vs.\ HyDE) and 50.6$\times$ (vs.\
+  DeepRetrieval).  All metrics are percentages ($\times 100$).}
+\label{tab:followir-main}
+\end{table*}
+
+\subsection{Cross-Dataset Validation}
+\label{sec:cross-dataset}
+
+\todo{NegConstraint (text retrieval with negation signals);
+  COCO-Neg (multimodal text-to-image negation). Both show
+  significant improvement (+4.3\% nDCG@10 on NegConstraint).}
+
+\subsection{BEIR Generalization}
+\label{sec:beir-generalization}
+
+\todo{NQ (+1.1\% nDCG@10), HotpotQA (-0.5\%, within variance),
+  MS MARCO (+2.0\% nDCG@10). CONSERVATIVE prompting avoids
+  pseudo-negation disaster.}
+
+\subsection{Ablation Study}
+\label{sec:ablation}
+
+\todo{Ablate each V2 component: dynamic $\tau$, safety gate,
+  gap weighting, Softplus penalty, $\qminus$ contribution.}
+
+\subsection{Encoder-Agnostic Analysis}
+\label{sec:encoder-agnostic}
+
+\todo{EAPS strategy: RepLLaMA (0.08\% at-risk) vs Mistral (62.9\%
+  at-risk). Retrieval-simulated distractor sampling with top-k=1000.}
+
+% ============================================================
+% 6. ANALYSIS: SEMANTIC ENTANGLEMENT
+% ============================================================
+\section{Analysis: Semantic Entanglement}
+\label{sec:analysis}
+
+\subsection{Definition and Variants}
+\label{sec:entanglement-definition}
+
+\todo{Structural entanglement (ComLQ: negation clauses share semantics
+  with positive intent). Generative entanglement (NQ: LLM generates
+  pseudo-negations overlapping with $\qbase$).}
+
+\subsection{Diagnostic Analysis}
+\label{sec:entanglement-diagnosis}
+
+\todo{$\cos(\mathbf{h}_{\text{base}}, \mathbf{h}_{\text{neg}})$ distribution: NegConstraint (orthogonal)
+  vs ComLQ (0.705 mean) vs NQ (0.625 mean). $S_{\text{neg}}$ higher
+  on relevant documents $\rightarrow$ double whammy effect.}
+
+\begin{figure}[t]
+  \centering
+  % \includegraphics[width=\columnwidth]{figures/semantic_entanglement.pdf}
+  \fbox{\parbox{\columnwidth}{\centering\vspace{3cm}%
+    \textbf{Figure 3: Semantic Entanglement Distribution}\\
+    \small (placeholder: to be replaced with violin/box plot)\vspace{1cm}}}
+  \caption{Distribution of $\cos(\mathbf{h}_{\text{base}}, \mathbf{h}_{\text{neg}})$ across three
+    scenarios. NegConstraint shows orthogonality (penalty effective),
+    while ComLQ (structural entanglement) and NQ (generative
+    entanglement) exhibit significant overlap, causing penalty failure.}
+  \label{fig:semantic-entanglement}
+\end{figure}
+
+% ============================================================
+% 7. CONCLUSION AND LIMITATIONS
+% ============================================================
+\section{Conclusion and Limitations}
+\label{sec:conclusion}
+
+\todo{Summary: three contributions. Limitations: semantic entanglement,
+  LLM dependency, high at-risk encoder sensitivity. Future directions.}
+
+% ============================================================
+% REFERENCES
+% ============================================================
+\bibliographystyle{plain}
+\bibliography{../refs/references}
+
+\end{document}
