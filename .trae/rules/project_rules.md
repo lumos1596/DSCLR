@@ -23,33 +23,8 @@ cd /home/luwa/Documents/DSCLR && /home/luwa/.conda/envs/dsclr/bin/python -m eval
 **target_avg = (Core17_changed_MAP@1000 + Robust04_changed_MAP@1000 + News21_changed_nDCG@5) / 3**
 除非用户特别说明，否则"平均指标"均指此定义，而非三个数据集 MAP 的简单平均。
 
-### DeIR-Dual V2 最佳参数（截至 2026-04-25）
+### pMRR: 衡量指令敏感度
 
-#### Repllama 编码器
+### 技术细节和实验结果查询
+需要查看 DeIR-Dual V2 的核心公式、最优参数、参数搜索策略等技术细节时，调用 `dsclr-tech-details` skill。如果实验结果有更新，需要及时更新到 `dsclr-exp-details` skill 中。
 
-**测试集网格搜索最优**：
-- α=1.0, β=1.0, δ=0.0
-- target_avg=0.26708
-- 来源：results/repllama-v2-grid/
-
-**训练集导出最优（学术可接受方法）**：
-- α=0.5, β=0.8, δ=0.0（top-1000 retrieval-simulated 采样）
-- 方法：训练集 + top-1000 retrieval-simulated 200干扰项 + V2公式网格搜索
-
-#### Mistral (E5-Mistral-7B) 编码器
-
-**测试集网格搜索最优**：
-- α=0.1, β=1.1, δ=0.05
-- 来源：results/mistral-v2-grid/
-
-**训练集导出最优（学术可接受方法）**：
-- α=0.3, β=1.0, δ=0.05（top-1000 retrieval-simulated 采样 compromise）
-- 方法：训练集 + top-1000 retrieval-simulated 200干扰项 + V2公式网格搜索
-
-#### 编码器无关参数搜索策略（EAPS）
-1. **Retrieval-Simulated Distractor Sampling**：从所有负文档中按 S_base 降序取 top-k（k=1000），再从中采样 200 个干扰项
-2. **关键洞察**：不同编码器的 at-risk 比例差异巨大
-   - Mistral: 62.9% 负文档 S_neg > S_base，top-1000 at-risk=28.3%
-   - Repllama: 0% 负文档 S_neg > S_base，top-1000 at-risk=0.08%
-3. **top-k 选择**：k=1000 比 k=100 更好，因为更接近测试集的真实检索分布
-4. **δ 方向**：高 at-risk 编码器（如 Mistral）需要正 δ 来限制惩罚范围

@@ -1,19 +1,25 @@
 """
-DeIR-Dual V2: 免训练奖惩双轨制评估引擎 (升级版)
+DeIR-Dual V2: 免训练奖惩双轨制评估引擎
+
+##在conda环境dsclr中运行
+
+## 评测相关：两个重要指标
+### target_avg 定义（重要！）
+**target_avg = (Core17_changed_MAP@1000 + Robust04_changed_MAP@1000 + News21_changed_nDCG@5) / 3**
+除非用户特别说明，否则"平均指标"均指此定义，而非三个数据集 MAP 的简单平均。
+
+### pMRR: 衡量指令敏感度
 
 核心公式:
     τ = Cos(Q_base, Q_neg) + δ                           (动态语义阈值)
-    gap_w = sigmoid((S_neg - S_base) × T_gap)             (差分加权)
     safety = 1 - sigmoid((S_neg - τ) × T_safety)          (安全门控)
-    penalty = min(α × Softplus(S_neg - τ) × gap_w, S_base × ratio)  (平滑+保护)
+    penalty = α × Softplus(S_neg - τ)                      (平滑惩罚)
     S_final = S_base + β × S_req × safety - penalty        (条件性奖励)
 
-V1 → V2 五大升级:
+V1 → V2 三大升级:
     1. 动态语义阈值: τ = Cos(Q_base, Q_neg) + δ (替代 mean(S_neg) + δ)
     2. Softplus 平滑惩罚: 替代 ReLU 硬截断
     3. 条件性奖励: safety 门控防止踩雷文档被推高
-    4. 差分加权: gap_w 放大 S_neg > S_base 的踩雷信号
-    5. 惩罚上限保护: ratio 限制最大惩罚比例，保护 MAP
 """
 
 import sys
@@ -44,16 +50,12 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
         task_name: str,
         output_dir: str,
         dual_queries_path: str,
-        t_gap: float = 20.0,
         t_safety: float = 20.0,
-        max_penalty_ratio: float = 0.5,
         device: str = "auto",
         **kwargs,
     ):
         self.dual_queries_path = dual_queries_path
-        self.t_gap = t_gap
         self.t_safety = t_safety
-        self.max_penalty_ratio = max_penalty_ratio
         if device == "auto":
             import torch as _torch
             try:
@@ -67,8 +69,7 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
 
         logger.info("🏛️ DeIR-Dual V2 奖惩双轨制模式已启用")
         logger.info(f"📁 Dual queries 数据路径: {self.dual_queries_path}")
-        logger.info(f"⚙️ T_gap=%.1f, T_safety=%.1f, max_penalty_ratio=%.2f",
-                     self.t_gap, self.t_safety, self.max_penalty_ratio)
+        logger.info(f"⚙️ T_safety=%.1f", self.t_safety)
 
     def load_dual_queries(self) -> Dict[str, Dict[str, Any]]:
         if not self.dual_queries_path:
@@ -116,9 +117,8 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
         """DeIR-Dual V2 核心打分函数。
 
         τ = Cos(Q_base, Q_neg) + δ
-        gap_w = sigmoid((S_neg - S_base) × T_gap)
         safety = 1 - sigmoid((S_neg - τ) × T_safety)
-        penalty = min(α × Softplus(S_neg - τ) × gap_w, S_base × ratio)
+        penalty = α × Softplus(S_neg - τ)
         S_final = S_base + β × S_req × safety - penalty
         """
         if not has_neg:
@@ -131,22 +131,14 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
         overflow = s_neg - tau
         smooth_penalty = F.softplus(overflow)
 
-        gap_w = torch.sigmoid((s_neg - s_base) * self.t_gap)
-
-        raw_penalty = alpha * smooth_penalty * gap_w
-
-        if self.max_penalty_ratio > 0:
-            penalty_cap = s_base * self.max_penalty_ratio
-            penalty = torch.min(raw_penalty, penalty_cap)
-        else:
-            penalty = raw_penalty
+        raw_penalty = alpha * smooth_penalty
 
         safety = 1.0 - torch.sigmoid((s_neg - tau) * self.t_safety)
 
         s_req_eff = s_req if has_req else torch.zeros_like(s_base)
-        s_final = s_base + beta * s_req_eff * safety - penalty
+        s_final = s_base + beta * s_req_eff * safety - raw_penalty
 
-        avg_penalty = float(penalty.mean().item())
+        avg_penalty = float(raw_penalty.mean().item())
         return s_final, avg_penalty
 
     def compute_deir_dual_v2_scores(
@@ -220,8 +212,7 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
         logger.info(f"   α 范围: {alpha_list}")
         logger.info(f"   β 范围: {beta_list}")
         logger.info(f"   δ 范围: {delta_list}")
-        logger.info(f"   T_gap=%.1f, T_safety=%.1f, max_penalty_ratio=%.2f",
-                     self.t_gap, self.t_safety, self.max_penalty_ratio)
+        logger.info(f"   T_safety=%.1f", self.t_safety)
 
         dual_data = self.load_dual_queries()
 
@@ -398,9 +389,7 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
                         "alpha": alpha,
                         "beta": beta,
                         "delta": delta,
-                        "t_gap": self.t_gap,
                         "t_safety": self.t_safety,
-                        "max_penalty_ratio": self.max_penalty_ratio,
                         "p-MRR": p_mrr,
                         "og_nDCG@5": og_ndcg,
                         "og_nDCG@10": metrics.get("original", {}).get("ndcg_at_10", 0.0),
@@ -477,9 +466,7 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
             "mode": "DeIR-Dual-V2",
             "dual_queries_source": self.dual_queries_path,
             "fixed_params": {
-                "t_gap": self.t_gap,
                 "t_safety": self.t_safety,
-                "max_penalty_ratio": self.max_penalty_ratio,
             },
             "timestamp": datetime.now().isoformat(),
             "best_params": best_params,
@@ -522,9 +509,7 @@ def run_deir_dual_v2(
     alphas: Optional[List[float]] = None,
     betas: Optional[List[float]] = None,
     deltas: Optional[List[float]] = None,
-    t_gap: float = 20.0,
     t_safety: float = 20.0,
-    max_penalty_ratio: float = 0.5,
     use_cache: bool = True,
     device: str = "auto",
     batch_size: int = 64,
@@ -540,9 +525,7 @@ def run_deir_dual_v2(
         task_name=task_name,
         output_dir=output_dir,
         dual_queries_path=dual_queries_path,
-        t_gap=t_gap,
         t_safety=t_safety,
-        max_penalty_ratio=max_penalty_ratio,
         use_cache=use_cache,
         device=device,
         batch_size=batch_size,
@@ -568,9 +551,7 @@ if __name__ == "__main__":
     parser.add_argument("--betas", type=str, default="0.1,0.3,0.5,0.7,0.9,1.1,1.3,1.5")
     parser.add_argument("--deltas", type=str, default="-0.10,-0.05,0.00,0.05,0.10,0.15,0.20,0.25,0.30")
 
-    parser.add_argument("--t_gap", type=float, default=20.0)
     parser.add_argument("--t_safety", type=float, default=20.0)
-    parser.add_argument("--max_penalty_ratio", type=float, default=0.5)
 
     parser.add_argument("--use_cache", type=str, default="true")
     parser.add_argument("--device", type=str, default="auto")
@@ -591,9 +572,7 @@ if __name__ == "__main__":
         alphas=alphas_list,
         betas=betas_list,
         deltas=deltas_list,
-        t_gap=args.t_gap,
         t_safety=args.t_safety,
-        max_penalty_ratio=args.max_penalty_ratio,
         use_cache=use_cache,
         device=args.device,
         batch_size=args.batch_size,

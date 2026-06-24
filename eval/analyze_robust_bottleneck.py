@@ -138,7 +138,7 @@ def analyze_dataset(task_name, dual_queries_path, cache_dir, device="cuda"):
             gap_w = torch.sigmoid((s_n - s_b) * 20.0)
             raw_penalty = alpha * smooth_penalty * gap_w
             penalty = torch.min(raw_penalty, s_b * 0.5)
-            safety = 1.0 - torch.sigmoid((s_n - tau) * 20.0)
+            safety = 1.0 - torch.sigmoid((s_n - tau) * 10.0)
             s_req_eff = s_r if has_req else torch.zeros_like(s_b)
             s_final = s_b + beta * s_req_eff * safety - penalty
 

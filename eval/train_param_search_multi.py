@@ -18,7 +18,7 @@ def apply_v2_formula(
     beta: float,
     delta: float,
     t_gap: float = 20.0,
-    t_safety: float = 20.0,
+    t_safety: float = 10.0,
     max_penalty_ratio: float = 0.5,
 ) -> np.ndarray:
     tau = cos_val + delta

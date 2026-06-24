@@ -61,7 +61,7 @@ for model_name, emb_path in [
     print(f"  Softplus(S_neg - tau): mean={sp_vals.mean():.4f}, std={sp_vals.std():.4f}")
     
     # gap_w statistics
-    gap_w_vals = 1.0 / (1.0 + np.exp(-gap_arr * 20.0))
+    gap_w_vals = 1.0 / (1.0 + np.exp(-gap_arr * 10.0))
     print(f"  gap_w: mean={gap_w_vals.mean():.4f}, std={gap_w_vals.std():.4f}")
     
     # Effective penalty per unit alpha

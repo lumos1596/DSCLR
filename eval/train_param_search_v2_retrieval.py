@@ -30,6 +30,10 @@ def main():
     parser.add_argument("--output_suffix", type=str, default="")
     parser.add_argument("--sparse_pos", action="store_true",
                         help="Use sparse positive evaluation: only keep 1 positive doc per query for nDCG@5")
+    parser.add_argument("--req_gated", action="store_true",
+                        help="Req-gated evaluation: only count positive docs where S_req > S_base (better approximates test-set 'changed' metrics)")
+    parser.add_argument("--changed_sim", action="store_true",
+                        help="Changed-simulated evaluation: only keep req-benefiting positive docs (S_req>S_base) and at-risk negative docs (S_neg>S_base) in ranking")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for sparse positive selection")
     args = parser.parse_args()
@@ -103,8 +107,8 @@ def main():
 
             sbase_pos = np.array([torch.dot(q_base[q_idx], pos_embs[pos_offset + pi]).item() for pi in range(pos_count)])
             sreq_pos = np.array([torch.dot(q_plus[q_idx], pos_embs[pos_offset + pi]).item() for pi in range(pos_count)])
-            sbase_neg = S_base_neg_all[q_idx, all_neg_indices].numpy()
-            sreq_neg = S_req_neg_all[q_idx, all_neg_indices].numpy()
+            sbase_neg = S_base_neg_all[q_idx, all_neg_indices].cpu().numpy()
+            sreq_neg = S_req_neg_all[q_idx, all_neg_indices].cpu().numpy()
 
             all_sbase = np.concatenate([sbase_pos, sbase_neg])
             all_sreq = np.concatenate([sreq_pos, sreq_neg])
@@ -224,7 +228,7 @@ def main():
         all_neg_indices = np.array([
             i for i in range(neg_embs.shape[0]) if i < own_neg_start or i >= own_neg_end
         ])
-        s_base_vals = S_base_neg_matrix[q_idx, all_neg_indices].numpy()
+        s_base_vals = S_base_neg_matrix[q_idx, all_neg_indices].cpu().numpy()
 
         sorted_idx = np.argsort(-s_base_vals)
 
@@ -240,8 +244,8 @@ def main():
 
     at_risk_counts = []
     for q_idx in range(n_queries):
-        s_base_dist = S_base_neg_matrix[q_idx, distractor_indices[q_idx]].numpy()
-        s_neg_dist = S_neg_neg_matrix[q_idx, distractor_indices[q_idx]].numpy()
+        s_base_dist = S_base_neg_matrix[q_idx, distractor_indices[q_idx]].cpu().numpy()
+        s_neg_dist = S_neg_neg_matrix[q_idx, distractor_indices[q_idx]].cpu().numpy()
         at_risk = (s_neg_dist > s_base_dist).mean()
         at_risk_counts.append(at_risk)
     avg_at_risk = np.mean(at_risk_counts)
@@ -249,7 +253,7 @@ def main():
 
     all_dist_sbase = []
     for q_idx in range(n_queries):
-        s_base_dist = S_base_neg_matrix[q_idx, distractor_indices[q_idx]].numpy()
+        s_base_dist = S_base_neg_matrix[q_idx, distractor_indices[q_idx]].cpu().numpy()
         all_dist_sbase.extend(s_base_dist.tolist())
     all_dist_sbase = np.array(all_dist_sbase)
     print(f"Distractor S_base: mean={all_dist_sbase.mean():.4f}, std={all_dist_sbase.std():.4f}")
@@ -258,17 +262,17 @@ def main():
 
     own_at_risk = []
     for q_idx in range(n_queries):
-        s_base_own = S_base_neg_matrix[q_idx, q_idx*15:(q_idx+1)*15].numpy()
-        s_neg_own = S_neg_neg_matrix[q_idx, q_idx*15:(q_idx+1)*15].numpy()
+        s_base_own = S_base_neg_matrix[q_idx, q_idx*15:(q_idx+1)*15].cpu().numpy()
+        s_neg_own = S_neg_neg_matrix[q_idx, q_idx*15:(q_idx+1)*15].cpu().numpy()
         own_at_risk.append((s_neg_own > s_base_own).mean())
     print(f"Own neg at-risk ratio: {np.mean(own_at_risk):.4f}")
 
     overall_at_risk = []
     for q_idx in range(n_queries):
-        s_base_own = S_base_neg_matrix[q_idx, q_idx*15:(q_idx+1)*15].numpy()
-        s_neg_own = S_neg_neg_matrix[q_idx, q_idx*15:(q_idx+1)*15].numpy()
-        s_base_dist = S_base_neg_matrix[q_idx, distractor_indices[q_idx]].numpy()
-        s_neg_dist = S_neg_neg_matrix[q_idx, distractor_indices[q_idx]].numpy()
+        s_base_own = S_base_neg_matrix[q_idx, q_idx*15:(q_idx+1)*15].cpu().numpy()
+        s_neg_own = S_neg_neg_matrix[q_idx, q_idx*15:(q_idx+1)*15].cpu().numpy()
+        s_base_dist = S_base_neg_matrix[q_idx, distractor_indices[q_idx]].cpu().numpy()
+        s_neg_dist = S_neg_neg_matrix[q_idx, distractor_indices[q_idx]].cpu().numpy()
         all_sb = np.concatenate([s_base_own, s_base_dist])
         all_sn = np.concatenate([s_neg_own, s_neg_dist])
         overall_at_risk.append((all_sn > all_sb).mean())
@@ -385,48 +389,119 @@ def main():
                         s_final = s_b + beta * s_req_eff
                     else:
                         smooth_penalty = np.log1p(np.exp(s_n - tau))
-                        gap_w = 1.0 / (1.0 + np.exp(-(s_n - s_b) * 20.0))
-                        raw_penalty = alpha * smooth_penalty * gap_w
-                        penalty = np.minimum(raw_penalty, s_b * 0.5)
+                        raw_penalty = alpha * smooth_penalty
                         safety = 1.0 - 1.0 / (1.0 + np.exp(-(s_n - tau) * 20.0))
                         s_req_eff = s_r if has_req else np.zeros_like(s_b)
-                        s_final = s_b + beta * s_req_eff * safety - penalty
+                        s_final = s_b + beta * s_req_eff * safety - raw_penalty
 
                     n_total = len(s_final)
                     rel = np.zeros(n_total)
-                    rel[:pos_count] = 1.0
-                    sorted_idx = np.argsort(-s_final)
 
-                    ap_sum = 0.0
-                    hits = 0
-                    for rank, idx in enumerate(sorted_idx):
-                        if idx < pos_count:
-                            hits += 1
-                            ap_sum += hits / (rank + 1)
-                    maps.append(ap_sum / pos_count if pos_count > 0 else 0.0)
-
-                    if sparse_pos_indices is not None:
-                        sparse_idx = sparse_pos_indices[q_idx]
-                        if sparse_idx >= 0:
-                            rel_sparse = np.zeros(n_total)
-                            rel_sparse[sparse_idx] = 1.0
+                    if args.changed_sim:
+                        filtered_indices = []
+                        filtered_rel = []
+                        for i in range(n_total):
+                            if i < pos_count:
+                                if s_r[i] > s_b[i]:
+                                    filtered_indices.append(i)
+                                    filtered_rel.append(1.0)
+                            else:
+                                if s_r[i] <= s_b[i]:
+                                    filtered_indices.append(i)
+                                    filtered_rel.append(0.0)
+                        effective_pos = sum(filtered_rel)
+                        if effective_pos == 0 or len(filtered_indices) <= int(effective_pos):
+                            maps.append(0.0)
+                            ndcgs.append(0.0)
+                            continue
+                        filtered_s_final = np.array([s_final[i] for i in filtered_indices])
+                        filtered_rel_arr = np.array(filtered_rel)
+                        sorted_idx = np.argsort(-filtered_s_final)
+                        n_filtered = len(filtered_indices)
+                        ap_sum = 0.0
+                        hits = 0
+                        for rank, idx in enumerate(sorted_idx):
+                            if filtered_rel_arr[idx] > 0:
+                                hits += 1
+                                ap_sum += hits / (rank + 1)
+                        maps.append(ap_sum / effective_pos)
+                        if sparse_pos_indices is not None:
+                            sparse_idx = sparse_pos_indices[q_idx]
+                            if sparse_idx >= 0 and s_r[sparse_idx] > s_b[sparse_idx]:
+                                rel_sparse = np.zeros(n_filtered)
+                                for fi, orig_i in enumerate(filtered_indices):
+                                    if orig_i == sparse_idx:
+                                        rel_sparse[fi] = 1.0
+                                        break
+                                dcg = sum(
+                                    rel_sparse[sorted_idx[r]] / math.log2(r + 2)
+                                    for r in range(min(5, n_filtered))
+                                )
+                                idcg = 1.0
+                                ndcgs.append(dcg / idcg if idcg > 0 else 0.0)
+                            else:
+                                ndcgs.append(0.0)
+                        else:
                             dcg = sum(
-                                rel_sparse[sorted_idx[r]] / math.log2(r + 2)
+                                filtered_rel_arr[sorted_idx[r]] / math.log2(r + 2)
+                                for r in range(min(5, n_filtered))
+                            )
+                            idcg = sum(
+                                1.0 / math.log2(i + 2) for i in range(min(5, int(effective_pos)))
+                            )
+                            ndcgs.append(dcg / idcg if idcg > 0 else 0.0)
+                    elif args.req_gated:
+                        gated_mask = np.zeros(pos_count, dtype=bool)
+                        for pi in range(pos_count):
+                            if s_r[pi] > s_b[pi]:
+                                gated_mask[pi] = True
+                        gated_pos_count = int(gated_mask.sum())
+                        for pi in range(pos_count):
+                            if gated_mask[pi]:
+                                rel[pi] = 1.0
+                        effective_pos = gated_pos_count
+                    else:
+                        rel[:pos_count] = 1.0
+                        effective_pos = pos_count
+
+                    if not args.changed_sim:
+                        sorted_idx = np.argsort(-s_final)
+
+                        if effective_pos == 0:
+                            maps.append(0.0)
+                            ndcgs.append(0.0)
+                            continue
+
+                        ap_sum = 0.0
+                        hits = 0
+                        for rank, idx in enumerate(sorted_idx):
+                            if rel[idx] > 0:
+                                hits += 1
+                                ap_sum += hits / (rank + 1)
+                        maps.append(ap_sum / effective_pos)
+
+                        if sparse_pos_indices is not None:
+                            sparse_idx = sparse_pos_indices[q_idx]
+                            if sparse_idx >= 0 and rel[sparse_idx] > 0:
+                                rel_sparse = np.zeros(n_total)
+                                rel_sparse[sparse_idx] = 1.0
+                                dcg = sum(
+                                    rel_sparse[sorted_idx[r]] / math.log2(r + 2)
+                                    for r in range(min(5, n_total))
+                                )
+                                idcg = 1.0
+                                ndcgs.append(dcg / idcg if idcg > 0 else 0.0)
+                            else:
+                                ndcgs.append(0.0)
+                        else:
+                            dcg = sum(
+                                rel[sorted_idx[r]] / math.log2(r + 2)
                                 for r in range(min(5, n_total))
                             )
-                            idcg = 1.0
+                            idcg = sum(
+                                1.0 / math.log2(i + 2) for i in range(min(5, effective_pos))
+                            )
                             ndcgs.append(dcg / idcg if idcg > 0 else 0.0)
-                        else:
-                            ndcgs.append(0.0)
-                    else:
-                        dcg = sum(
-                            rel[sorted_idx[r]] / math.log2(r + 2)
-                            for r in range(min(5, n_total))
-                        )
-                        idcg = sum(
-                            1.0 / math.log2(i + 2) for i in range(min(5, pos_count))
-                        )
-                        ndcgs.append(dcg / idcg if idcg > 0 else 0.0)
 
                 avg_map = float(np.mean(maps))
                 avg_ndcg = float(np.mean(ndcgs))
@@ -445,22 +520,28 @@ def main():
                         f"[{trial}/{total}] a={alpha} b={beta:.2f} d={delta:.2f} | MAP={avg_map:.4f} nDCG@5={avg_ndcg:.4f}"
                     )
 
+    if args.changed_sim:
+        eval_tag = "changed-sim"
+    elif args.req_gated:
+        eval_tag = "req-gated"
+    else:
+        eval_tag = "standard"
     all_results.sort(key=lambda x: x["map"], reverse=True)
-    print(f"\n=== Top 10 by MAP (V2, retrieval_top_k={top_k}, {n_dist} distractors, {model_name}) ===")
+    print(f"\n=== Top 10 by MAP (V2-{eval_tag}, retrieval_top_k={top_k}, {n_dist} distractors, {model_name}) ===")
     for i, r in enumerate(all_results[:10]):
         print(
             f'{i+1}. a={r["alpha"]:.1f} b={r["beta"]:.2f} d={r["delta"]:.2f} | MAP={r["map"]:.4f} nDCG@5={r["ndcg@5"]:.4f}'
         )
 
     all_results.sort(key=lambda x: x["ndcg@5"], reverse=True)
-    print(f"\n=== Top 10 by nDCG@5 (V2, retrieval_top_k={top_k}, {n_dist} distractors, {model_name}) ===")
+    print(f"\n=== Top 10 by nDCG@5 (V2-{eval_tag}, retrieval_top_k={top_k}, {n_dist} distractors, {model_name}) ===")
     for i, r in enumerate(all_results[:10]):
         print(
             f'{i+1}. a={r["alpha"]:.1f} b={r["beta"]:.2f} d={r["delta"]:.2f} | MAP={r["map"]:.4f} nDCG@5={r["ndcg@5"]:.4f} target_avg={r["target_avg"]:.4f}'
         )
 
     all_results.sort(key=lambda x: x["target_avg"], reverse=True)
-    print(f"\n=== Top 10 by target_avg = (2*MAP + nDCG@5)/3 (V2, retrieval_top_k={top_k}, {n_dist} distractors, {model_name}) ===")
+    print(f"\n=== Top 10 by target_avg = (2*MAP + nDCG@5)/3 (V2-{eval_tag}, retrieval_top_k={top_k}, {n_dist} distractors, {model_name}) ===")
     for i, r in enumerate(all_results[:10]):
         print(
             f'{i+1}. a={r["alpha"]:.1f} b={r["beta"]:.2f} d={r["delta"]:.2f} | MAP={r["map"]:.4f} nDCG@5={r["ndcg@5"]:.4f} target_avg={r["target_avg"]:.4f}'
@@ -469,17 +550,21 @@ def main():
     suffix = args.output_suffix
     model_name_safe = model_name.replace("/", "_")
     sparse_tag = "_sparse" if args.sparse_pos else ""
+    gated_tag = "_reqgated" if args.req_gated else ""
+    changed_tag = "_changedsim" if args.changed_sim else ""
     with open(
-        f"dataset/FollowIR_train/train/train_param_search_v2_retrieval_topk{top_k}_{model_name_safe}{sparse_tag}{suffix}.json",
+        f"dataset/FollowIR_train/train/train_param_search_v2_retrieval_topk{top_k}_{model_name_safe}{sparse_tag}{gated_tag}{changed_tag}{suffix}.json",
         "w",
     ) as f:
         json.dump(
             {
-                "engine": "V2",
+                "engine": "V2-final",
                 "n_distractors": n_dist,
                 "retrieval_top_k": top_k,
                 "model_name": model_name,
                 "sparse_pos": args.sparse_pos,
+                "req_gated": args.req_gated,
+                "changed_sim": args.changed_sim,
                 "seed": args.seed if args.sparse_pos else None,
                 "analytical_beta": args.analytical_beta,
                 "analytical_k": args.analytical_k if args.analytical_beta else None,

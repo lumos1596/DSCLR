@@ -586,8 +586,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--alpha", type=float, default=0.5)
     parser.add_argument("--beta", type=float, default=1.1)
     parser.add_argument("--delta", type=float, default=0.0)
-    parser.add_argument("--t_gap", type=float, default=20.0)
-    parser.add_argument("--t_safety", type=float, default=20.0)
+    parser.add_argument("--t_gap", type=float, default=10.0)
+    parser.add_argument("--t_safety", type=float, default=10.0)
     parser.add_argument("--max_penalty_ratio", type=float, default=0.5)
 
     parser.add_argument("--dual_queries_path", type=str, default=None)

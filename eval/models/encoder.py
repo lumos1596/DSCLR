@@ -110,20 +110,34 @@ class ModelFactory:
         """
         # 检查是否已注册
         if model_name in cls._models:
-            return cls._models[model_name](**kwargs)
+            return cls._models[model_name](model_name=model_name, **kwargs)
         
-        # 自动识别 RepLLaMA 模型
-        if "repllama" in model_name.lower():
+        model_name_lower = model_name.lower()
+
+        # 自动识别 RepLLaMA / Promptriever PEFT 模型
+        if "repllama" in model_name_lower or "promptriever" in model_name_lower:
             from .repllama_encoder import RepLLaMAEncoder
-            logger.info(f"🔍 自动识别为 RepLLaMA 模型: {model_name}")
+            logger.info(f"🔍 自动识别为 RepLLaMA/Promptriever PEFT 模型: {model_name}")
             return RepLLaMAEncoder(model_name=model_name, **kwargs)
         
         # 自动识别 E5-Mistral 模型
-        if "e5-mistral" in model_name.lower():
+        if "e5-mistral" in model_name_lower:
             # 延迟导入避免循环依赖
             from .e5_mistral_encoder import E5MistralEncoder
             logger.info(f"🔍 自动识别为 E5-Mistral 模型: {model_name}")
             return E5MistralEncoder(model_name=model_name, **kwargs)
+        
+        # 自动识别 LLaMA 3.1 8B Instruct 模型
+        if "meta-llama" in model_name_lower or "llama-3.1" in model_name_lower or "llama3.1" in model_name_lower:
+            from .llama3_encoder import LLaMA31Encoder
+            logger.info(f"🔍 自动识别为 LLaMA 3.1 模型: {model_name}")
+            return LLaMA31Encoder(model_name=model_name, **kwargs)
+        
+        # 自动识别 INF-X-Retriever 模型
+        if "inf-retriever" in model_name_lower or "infx" in model_name_lower:
+            from .infx_encoder import INFXRetrieverEncoder
+            logger.info(f"🔍 自动识别为 INF-X-Retriever 模型: {model_name}")
+            return INFXRetrieverEncoder(model_name=model_name, **kwargs)
         
         # 默认使用 SentenceTransformer
         return SentenceTransformerEncoder(

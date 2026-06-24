@@ -91,7 +91,7 @@ def apply_deir_dual_v2(
     beta: float,
     delta: float,
     t_gap: float = 20.0,
-    t_safety: float = 20.0,
+    t_safety: float = 10.0,
     max_penalty_ratio: float = 0.5,
 ) -> torch.Tensor:
     S_final = S_base.clone()
@@ -203,7 +203,7 @@ def run_search(
     betas: Optional[List[float]] = None,
     deltas: Optional[List[float]] = None,
     t_gap: float = 20.0,
-    t_safety: float = 20.0,
+    t_safety: float = 10.0,
     max_penalty_ratio: float = 0.5,
 ) -> Dict[str, Any]:
     start_time = time.time()

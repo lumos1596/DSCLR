@@ -36,6 +36,8 @@ def get_model_cache_dir(base_cache_dir: str, model_name: str) -> str:
         model_subdir = "e5-mistral-7b"
     elif "bge" in model_name.lower():
         model_subdir = "bge-large-en"
+    elif "promptriever-llama3" in model_name.lower() or "promptriever_llama3" in model_name.lower():
+        model_subdir = "promptriever_llama31_8b_instruct"
     else:
         model_subdir = model_name.split("/")[-1].replace("-", "_")
     
@@ -48,6 +50,8 @@ def get_model_name_short(model_name: str) -> str:
         return "e5-mistral-7b"
     elif "bge" in model_name.lower():
         return "bge-large-en"
+    elif "promptriever-llama3" in model_name.lower() or "promptriever_llama3" in model_name.lower():
+        return "promptriever_llama31_8b_instruct"
     else:
         # 默认使用模型名称的最后一部分
         return model_name.split("/")[-1].replace("-", "_")

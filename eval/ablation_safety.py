@@ -34,15 +34,15 @@ class SafetyAblationEngine(DSCLREvaluatorEngine):
         output_dir: str,
         dual_queries_path: str,
         use_safety: bool = True,
-        t_gap: float = 20.0,
-        t_safety: float = 20.0,
+        use_softplus: bool = True,
+        t_safety: float = 10.0,
         max_penalty_ratio: float = 0.0,
         device: str = "auto",
         **kwargs,
     ):
         self.dual_queries_path = dual_queries_path
         self.use_safety = use_safety
-        self.t_gap = t_gap
+        self.use_softplus = use_softplus
         self.t_safety = t_safety
         self.max_penalty_ratio = max_penalty_ratio
         if device == "auto":
@@ -57,7 +57,8 @@ class SafetyAblationEngine(DSCLREvaluatorEngine):
         super().__init__(model_name, task_name, output_dir, **kwargs)
 
         mode = "WITH_SAFETY" if use_safety else "NO_SAFETY"
-        logger.info(f"🔬 Safety Ablation: {mode}")
+        sp_mode = "SOFTPLUS" if use_softplus else "RELU"
+        logger.info(f"🔬 Safety Ablation: {mode} | {sp_mode}")
         logger.info(f"📁 Dual queries: {self.dual_queries_path}")
 
     def load_dual_queries(self) -> Dict[str, Dict[str, Any]]:
@@ -107,11 +108,12 @@ class SafetyAblationEngine(DSCLREvaluatorEngine):
         tau = cos_qbase_qneg + delta
 
         overflow = s_neg - tau
-        smooth_penalty = F.softplus(overflow)
+        if self.use_softplus:
+            smooth_penalty = F.softplus(overflow)
+        else:
+            smooth_penalty = F.relu(overflow)
 
-        gap_w = torch.sigmoid((s_neg - s_base) * self.t_gap)
-
-        raw_penalty = alpha * smooth_penalty * gap_w
+        raw_penalty = alpha * smooth_penalty
 
         if self.max_penalty_ratio > 0:
             penalty_cap = s_base * self.max_penalty_ratio
@@ -298,6 +300,8 @@ class SafetyAblationEngine(DSCLREvaluatorEngine):
                     all_results.append({
                         "alpha": alpha, "beta": beta, "delta": delta,
                         "use_safety": self.use_safety,
+                        "use_softplus": self.use_softplus,
+                        "max_penalty_ratio": self.max_penalty_ratio,
                         "p-MRR": p_mrr,
                         "og_MAP@1000": og_map,
                         "changed_MAP@1000": changed_map,
@@ -335,15 +339,18 @@ if __name__ == "__main__":
     parser.add_argument("--dual_queries_path", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--use_safety", type=str, default="true")
+    parser.add_argument("--use_softplus", type=str, default="true")
     parser.add_argument("--alphas", type=str, default="0.5,1.0,1.5,2.0,2.5,3.0")
     parser.add_argument("--betas", type=str, default="0.1,0.3,0.5,0.7,0.9,1.1,1.3,1.5")
     parser.add_argument("--deltas", type=str, default="-0.10,-0.05,0.00,0.05,0.10,0.15,0.20,0.25,0.30")
     parser.add_argument("--use_cache", type=str, default="true")
+    parser.add_argument("--max_penalty_ratio", type=float, default=0.0)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--batch_size", type=int, default=64)
 
     args = parser.parse_args()
     use_safety = args.use_safety.lower() == "true"
+    use_softplus = args.use_softplus.lower() == "true"
     alphas_list = [float(x.strip()) for x in args.alphas.split(",") if x.strip()]
     betas_list = [float(x.strip()) for x in args.betas.split(",") if x.strip()]
     deltas_list = [float(x.strip()) for x in args.deltas.split(",") if x.strip()]
@@ -355,6 +362,8 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         dual_queries_path=args.dual_queries_path,
         use_safety=use_safety,
+        use_softplus=use_softplus,
+        max_penalty_ratio=args.max_penalty_ratio,
         use_cache=use_cache,
         device=args.device,
         batch_size=args.batch_size,

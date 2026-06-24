@@ -111,15 +111,16 @@ pMRR: 衡量指令敏感度
 | 第一性原理 V1 | 0.67 | 1.23 | 0.05 | 0.2812 | 0.1039 | 向量空间几何+噪声边际 |
 | 第一性原理 V2 (NP+KS) | 0.5 | 1.0 | 0.0 | 0.278 | 0.1943 | NP 阈值+KS 最大化 |
 | 第一性原理 V4 (测试集推导) | 1.0 | 1.29 | 0.0 | 0.2631 | 0.2243 | 30 种方法一致性验证 |
-| **第一性原理 V5 (训练集推导)** | **1.0** | **1.926** | **0.0** | **0.2624** | **0.2360** | **训练集量级对齐** |
+| 第一性原理 V5 (训练集推导, δ=0) | 0.72 | 1.46 | 0.0 | 0.2672 | 0.2152 | 训练集量级对齐 |
+| **第一性原理 V5 (训练集推导, δ=0.02)** | **0.72** | **1.32** | **0.02** | **0.2841** | **0.1687** | **训练集量级对齐+噪声边际** |
 
 **分析**：
-- **训练集推导 V5 是学术规范的方法**：仅使用训练集编码推导参数，不使用测试集编码
-- **V5 的 p-MRR (0.2360) 是所有方法中最高的**，比 V4 (测试集推导) 提升 5.2%，比网格搜索提升 70.9%
-- **target_avg 下降 6.6%**（0.281→0.2624），但 p-MRR 提升 70.9%，权衡合理
-- **β=1.926 的物理意义**：增强系数大于 1，因为 Q_plus 引入了原始查询没有的新信息，需要更大的增强权重
-- **α=1.0 的 Scale Alignment**：训练集和测试集推导一致收敛到 α≈1.0，验证了方法的稳健性
-- **δ=0.0（NP 阈值）**：τ = Cos(Q_base, Q_neg)，动态阈值已捕获语义关系
+- **V5 δ=0.02 是推荐的平衡方案**：target_avg=0.2841 超过网格搜索(0.281)，p-MRR=0.1687 比网格搜索(0.1381)高 22.1%
+- **修复 τ 计算后**：τ = Cos(Q_base, Q_neg) + δ（之前错误地使用 τ = S_neg + δ，导致 at-risk ratio=0%）
+- **Robust04 MAP 从 0.2257 提升到 0.2533**，提升 12.2%
+- **β 从 1.926 降到 1.32**：修复后 at-risk ratio 从 0% 变为 ~5%，β 推导更准确
+- **α 从 1.0 降到 0.72**：修复后 at-risk 文档的 Softplus 值更大，惩罚更有效
+- **δ=0.02 的物理意义**：δ = 0.09 × σ(S_neg) ≈ 0.02，约 1/10 个标准差的噪声边际
 - **推导过程**：eval/first_principles_params_train.py，训练集 855 查询，878 正例，12825 负例
 - 来源：results/train_derived_params.json
 
@@ -482,11 +483,11 @@ NQ 查询是 factoid 问题，不包含真实否定信号。LLM 被强制生成 
 
 **对比方法**：
 - **DeIR-Dual V2**：训练集导出最优参数 α=1.0, β=1.5, δ=0.05
-- **DeepRetrieval** (Li et al. 2025)：RL-based query generation，DeepRetrieval-NQ-BM25-3B 改写器 + RepLLaMA 编码器，do_sample=False，官方提示模板（Qwen2.5 chat format + dense retrieval instruction + JSON output）
-- **HyDE** (Gao et al. 2023)：官方代码 https://github.com/texttron/hyde，n=8 假想文档，temperature=0.7，向量平均（query + 8 hypo docs → avg → normalize）
-- **Query2Doc** (Wang et al. EMNLP 2023)：论文 arXiv 2303.07678，dense expansion: q [SEP] d'，1 个伪文档，temperature=0.0
-- **RAG-Fusion** (Raudaschl 2024)：官方代码 https://github.com/Raudaschl/rag-fusion，4 个生成查询 + 原始查询，RRF 融合（k=60），temperature=0.7
-- **RAG-QR** (Ma et al. EMNLP 2023)：论文《Query Rewriting for Retrieval-Augmented Large Language Models》，官方代码 https://github.com/xbmxb/RAG-query-rewriting，T5-large (770M) PPO-trained rewriter (t5l-turbo-hotpot-0331)，prompt="rewrite a better search query: "，num_beams=4, max_length=50，改写器不含 instruction，编码时拼接 instruction (rewritten_query + instruction)
+- **DeepRetrieval** (Jiang et al. 2025)：RL-based query generation，DeepRetrieval-NQ-BM25-3B 改写器 + RepLLaMA 编码器，do_sample=False，官方提示模板（Qwen2.5 chat format + dense retrieval instruction + JSON output）。**论文**：DeepRetrieval: Hacking Real Search Engines and Retrievers with Large Language Models via Reinforcement Learning. Pengcheng Jiang et al. (UIUC). COLM 2025. arXiv:2503.00223. https://arxiv.org/abs/2503.00223
+- **HyDE** (Gao et al. 2023)：官方代码 https://github.com/texttron/hyde，n=8 假想文档，temperature=0.7，向量平均（query + 8 hypo docs → avg → normalize）。**论文**：Precise Zero-Shot Dense Retrieval without Relevance Labels. Luyu Gao et al. (University of Waterloo, Carnegie Mellon University). ACL 2023. arXiv:2212.10496. https://aclanthology.org/2023.acl-long.99/
+- **Query2Doc** (Wang et al. 2023)：论文 arXiv 2303.07678，dense expansion: q [SEP] d'，1 个伪文档，temperature=0.0。**论文**：Query2doc: Query Expansion with Large Language Models. Liang Wang, Nan Yang, Furu Wei (Microsoft Research). EMNLP 2023. https://aclanthology.org/2023.emnlp-main.585/
+- **RAG-Fusion** (Raudaschl 2024)：官方代码 https://github.com/Raudaschl/rag-fusion，4 个生成查询 + 原始查询，RRF 融合（k=60），temperature=0.7。**项目**：RAG-Fusion: The Next Frontier of Search Technology. Adrian H. Raudaschl. 2024. 开源项目，非正式论文。
+- **RAG-QR** (Ma et al. 2023)：论文《Query Rewriting for Retrieval-Augmented Large Language Models》，官方代码 https://github.com/xbmxb/RAG-query-rewriting，T5-large (770M) PPO-trained rewriter (t5l-turbo-hotpot-0331)，prompt="rewrite a better search query: "，num_beams=4, max_length=50，改写器不含 instruction，编码时拼接 instruction (rewritten_query + instruction)。**论文**：Query Rewriting for Retrieval-Augmented Large Language Models. Xinbei Ma et al. (Shanghai Jiao Tong University, Microsoft Research Asia). EMNLP 2023. https://aclanthology.org/2023.emnlp-main.322/
 
 ### 逐数据集结果
 

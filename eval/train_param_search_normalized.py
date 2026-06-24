@@ -82,7 +82,7 @@ def main():
     sbase_arr = np.array(all_sbase)
 
     sp_vals = np.log1p(np.exp(overflow_arr))
-    gap_w_vals = 1.0 / (1.0 + np.exp(-gap_arr * 20.0))
+    gap_w_vals = 1.0 / (1.0 + np.exp(-gap_arr * 10.0))
     eff_penalty_mean = float((sp_vals * gap_w_vals).mean())
     sbase_mean = float(sbase_arr.mean())
 
@@ -225,7 +225,7 @@ def main():
                             gap_w = 1.0 / (1.0 + np.exp(-(s_n - s_b) * 20.0))
                             raw_penalty = alpha * smooth_penalty * gap_w
                             penalty = np.minimum(raw_penalty, s_b * 0.5)
-                            safety = 1.0 - 1.0 / (1.0 + np.exp(-(s_n - tau) * 20.0))
+                            safety = 1.0 - 1.0 / (1.0 + np.exp(-(s_n - tau) * 10.0))
                             s_req_eff = s_r if has_req else np.zeros_like(s_b)
                             s_final = s_b + beta * reward_gate * s_req_eff * safety - penalty
 

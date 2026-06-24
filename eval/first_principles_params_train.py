@@ -64,21 +64,30 @@ def compute_delta_npmle(S_neg):
     return 0.0
 
 
-def compute_first_principles_params_from_scores(S_base, S_req, S_neg, device, delta_k=0.0):
+def compute_first_principles_params_from_scores(S_base, S_req, S_neg, cos_qbase_qneg, device, delta_k=0.0):
+    """
+    使用量级对齐原则推导参数
+
+    Args:
+        S_base: 原始查询与文档的余弦相似度 (n_queries, n_docs)
+        S_req: 增强查询与文档的余弦相似度
+        S_neg: 否定查询与文档的余弦相似度
+        cos_qbase_qneg: Cos(Q_base, Q_neg) 每查询标量 (n_queries,)
+        device: 计算设备
+        delta_k: δ 推导参数，δ = delta_k × σ(S_neg)
+    """
     sigma_random = S_neg.std().item()
     delta = delta_k * sigma_random
-    tau = S_neg + delta
+
+    # τ = Cos(Q_base, Q_neg) + δ, shape: (n_queries, 1) for broadcasting
+    tau = cos_qbase_qneg.unsqueeze(1) + delta
+
     softplus_at_risk = torch.nn.functional.softplus(S_neg - tau)
 
     E_softplus_at_risk = softplus_at_risk.mean().item()
-    E_softplus_all = torch.nn.functional.softplus(S_neg - delta).mean().item()
 
     sigma_random = S_neg.std().item()
     E_tau = tau.mean().item()
-
-    n_docs = S_base.shape[1]
-    has_req_mask = torch.ones_like(S_base, dtype=torch.bool).to(device)
-    has_neg_mask = torch.ones_like(S_base, dtype=torch.bool).to(device)
 
     at_risk_mask = (S_neg > tau).float()
     safe_mask = 1 - at_risk_mask
@@ -153,7 +162,13 @@ def main():
     parser = argparse.ArgumentParser(description="First-Principles Parameter Derivation from Training Set")
     parser.add_argument("--device", default="cuda", help="Device to use")
     parser.add_argument("--delta_k", type=float, default=0.0, help="Coverage factor k for δ = k × σ_random")
+    parser.add_argument("--embeddings_path", type=str, default=None,
+                        help="Path to training embeddings .pt file (default: RepLLaMA)")
+    parser.add_argument("--output_path", type=str, default=None,
+                        help="Path to save derived parameters JSON")
     args = parser.parse_args()
+
+    embeddings_path = args.embeddings_path or TRAIN_EMBEDDINGS_PATH
 
     device = args.device
     if device == "cuda":
@@ -163,7 +178,7 @@ def main():
     logger.info(f"Using device: {device}")
 
     logger.info("Loading training set embeddings...")
-    emb = torch.load(TRAIN_EMBEDDINGS_PATH, map_location=device, weights_only=False)
+    emb = torch.load(embeddings_path, map_location=device, weights_only=False)
     logger.info(f"  Loaded embeddings: q_base={emb['q_base_embeddings'].shape}, "
                 f"pos={emb['pos_embeddings'].shape}, neg={emb['neg_embeddings'].shape}")
 
@@ -196,7 +211,12 @@ def main():
     S_neg = torch.cat([S_neg_pos, S_neg_neg], dim=1)
     logger.info(f"  Combined: S_base={S_base.shape}, S_req={S_req.shape}, S_neg={S_neg.shape}")
 
-    results = compute_first_principles_params_from_scores(S_base, S_req, S_neg, device, delta_k=args.delta_k)
+    # Compute cos_qbase_qneg: Cos(Q_base, Q_neg) per query
+    cos_qbase_qneg = torch.sum(q_base_emb * q_minus_emb, dim=1)  # (n_queries,)
+    logger.info(f"  cos_qbase_qneg: mean={cos_qbase_qneg.mean():.4f}, std={cos_qbase_qneg.std():.4f}, "
+                f"min={cos_qbase_qneg.min():.4f}, max={cos_qbase_qneg.max():.4f}")
+
+    results = compute_first_principles_params_from_scores(S_base, S_req, S_neg, cos_qbase_qneg, device, delta_k=args.delta_k)
 
     logger.info("\n" + "="*80)
     logger.info("TRAINING SET PARAMETER DERIVATION RESULTS")
@@ -255,9 +275,9 @@ def main():
         },
     }
 
-    output_path = "/home/luwa/Documents/DSCLR/results/train_derived_params.json"
+    output_path = args.output_path or "/home/luwa/Documents/DSCLR/results/train_derived_params.json"
     with open(output_path, "w") as f:
-        json.dump(output, f, indent=2, ensure_ascii=False)
+        json.dump(output, f, indent=2, ensure_ascii=False, default=lambda o: float(o))
     logger.info(f"\n  Results saved to: {output_path}")
 
     return output

@@ -181,7 +181,7 @@ def main():
                             gap_w = 1.0 / (1.0 + np.exp(-(s_n - s_b) * 20.0))
                             raw_penalty = alpha * smooth_penalty * gap_w
                             penalty = np.minimum(raw_penalty, s_b * 0.5)
-                            safety = 1.0 - 1.0 / (1.0 + np.exp(-(s_n - tau) * 20.0))
+                            safety = 1.0 - 1.0 / (1.0 + np.exp(-(s_n - tau) * 10.0))
                             s_req_eff = s_r if has_req else np.zeros_like(s_b)
                             s_final = s_b + beta * reward_gate * s_req_eff * safety - penalty
 
