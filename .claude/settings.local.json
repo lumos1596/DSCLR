@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(conda run:*)",
+      "Bash(/home/luwa/.conda/envs/dsclr/bin/python:*)",
+      "Bash(source:*)",
+      "Bash(conda activate:*)"
+    ]
+  }
+}
