@@ -39,7 +39,7 @@ class RepLLaMAEncoder(BaseEncoder):
         "samaya-ai/promptriever-llama3.1-8b-instruct-v1": "/home/luwa/Documents/models/promptriever-llama3.1-8b-instruct-v1",
         "samaya-ai/promptriever-llama3.1-8b-v1": "/home/luwa/Documents/models/promptriever-llama3.1-8b-v1",
         "samaya-ai/promptriever-llama2-7b-v1": "/home/luwa/Documents/models/promptriever-llama2-7b-v1",
-        "samaya-ai/RepLLaMA-reproduced": "/home/luwa/Documents/models/RepLLaMA-reproduced",
+        "samaya-ai/RepLLaMA-reproduced": "/home/luwa/.cache/huggingface/hub/models--samaya-ai--RepLLaMA-reproduced/snapshots/7f7fd93984469df6790272ba6bea7b05bb3f319e",
     }
     
     def __init__(

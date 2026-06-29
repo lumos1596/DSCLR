@@ -19,6 +19,28 @@ V1 → V2 三大升级:
 2. Softplus 平滑惩罚: 替代 ReLU 硬截断
 3. 条件性奖励: safety 门控防止踩雷文档被推高
 
+### 阈值方案变体
+
+**原始方案（默认）**：
+```
+τ = Cos(Q_base, Q_neg) + δ
+```
+- 直接使用 query-query 相似度作为阈值
+- 经验事实：Cos(Q_base, Q_neg) > S_neg（QQ 相似度 > QD 相似度），提供自然安全边际
+
+**QD-Max 方案（审稿人友好，尺度安全）**：
+```
+τ = max(Cos(Q_base, Q_neg), μ(S_neg) + k·σ(S_neg)) + δ
+```
+- 显式定义 QD 空间统计下界：`μ(S_neg) + k·σ(S_neg)`
+- max 操作不混尺度：两个候选阈值各自在自己的空间内定义
+- 当 Cos 异常低时（< μ(S_neg) + k·σ(S_neg)），QD 下界生效提供保护
+- **k 推导**：搜索使训练集 at-risk ratio 最接近原始方案的 k（通常 k=0）
+- **与原始方案等价性**：训练集中 Cos(Q_base, Q_neg) 分布双峰（60% 为 0，40% ≥ 0.40），当 k=0 时 qd_floor=μ(S_neg)≈0.18，对所有 Cos>0 的 query 不生效，因此结果与原始方案完全一致
+- **特殊处理**：Cos=0（[NONE] 查询）时不应用 qd_floor，因为 q_minus 为零向量，S_neg 无意义
+- 测试集结果：p-MRR=0.1691, target_avg=0.2851（与原始方案完全相同）
+- 来源：eval/experiment_tau_schemes.py
+
 ## 评测指标定义
 
 **target_avg = (Core17_changed_MAP@1000 + Robust04_changed_MAP@1000 + News21_changed_nDCG@5) / 3**

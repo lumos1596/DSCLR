@@ -34,13 +34,7 @@ evaluation/
 utils/construct_data/
 
 # Data files
-dataset/FollowIR_test/dual_queries/
-dataset/FollowIR_test/dual_queries_*/
-dataset/FollowIR_test/embeddings/
-dataset/FollowIR_test/variants/
-dataset/FollowIR_test/variants_cleaned/
-dataset/FollowIR_train/
-dataset/NegConstraint/
+dataset/
 
 # Results and output
 results/

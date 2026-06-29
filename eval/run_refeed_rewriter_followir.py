@@ -371,7 +371,7 @@ class ReFeedRewriterEvaluator(DSCLREvaluatorEngine):
 
         # 计算 FollowIR 指标
         evaluator = FollowIREvaluator(self.task_name)
-        metrics = evaluator.evaluate(results_og, results_changed, query_ids_og, query_ids_changed)
+        metrics = evaluator.evaluate(results_og, results_changed)
 
         elapsed = time.time() - start_time
         logger.info(f"Total time: {elapsed:.1f}s")
@@ -386,10 +386,10 @@ class ReFeedRewriterEvaluator(DSCLREvaluatorEngine):
             "timestamp": datetime.now().isoformat(),
             "elapsed_seconds": elapsed,
             "p-MRR": metrics.get("p-MRR", 0.0),
-            "og_MAP@1000": metrics.get("og_MAP@1000", 0.0),
-            "og_nDCG@5": metrics.get("og_nDCG@5", 0.0),
-            "changed_MAP@1000": metrics.get("changed_MAP@1000", 0.0),
-            "changed_nDCG@5": metrics.get("changed_nDCG@5", 0.0),
+            "og_MAP@1000": metrics.get("original", {}).get("map_at_1000", 0.0),
+            "og_nDCG@5": metrics.get("original", {}).get("ndcg_at_5", 0.0),
+            "changed_MAP@1000": metrics.get("changed", {}).get("map_at_1000", 0.0),
+            "changed_nDCG@5": metrics.get("changed", {}).get("ndcg_at_5", 0.0),
             "n_og_queries": len(query_ids_og),
             "n_changed_queries": len(query_ids_changed),
             "sample_rewrites": {qid: qr_cache[qid] for qid in list(qr_cache.keys())[:3]},
