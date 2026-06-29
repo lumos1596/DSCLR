@@ -21,25 +21,9 @@ V1 → V2 三大升级:
 
 ### 阈值方案变体
 
-**原始方案（默认）**：
-```
-τ = Cos(Q_base, Q_neg) + δ
-```
-- 直接使用 query-query 相似度作为阈值
-- 经验事实：Cos(Q_base, Q_neg) > S_neg（QQ 相似度 > QD 相似度），提供自然安全边际
+**详见**：[dsclr-param-derivation skill](../dsclr-param-derivation/SKILL.md) 的"公式体系 V5 - 阈值方案变体"章节。
 
-**QD-Max 方案（审稿人友好，尺度安全）**：
-```
-τ = max(Cos(Q_base, Q_neg), μ(S_neg) + k·σ(S_neg)) + δ
-```
-- 显式定义 QD 空间统计下界：`μ(S_neg) + k·σ(S_neg)`
-- max 操作不混尺度：两个候选阈值各自在自己的空间内定义
-- 当 Cos 异常低时（< μ(S_neg) + k·σ(S_neg)），QD 下界生效提供保护
-- **k 推导**：搜索使训练集 at-risk ratio 最接近原始方案的 k（通常 k=0）
-- **与原始方案等价性**：训练集中 Cos(Q_base, Q_neg) 分布双峰（60% 为 0，40% ≥ 0.40），当 k=0 时 qd_floor=μ(S_neg)≈0.18，对所有 Cos>0 的 query 不生效，因此结果与原始方案完全一致
-- **特殊处理**：Cos=0（[NONE] 查询）时不应用 qd_floor，因为 q_minus 为零向量，S_neg 无意义
-- 测试集结果：p-MRR=0.1691, target_avg=0.2851（与原始方案完全相同）
-- 来源：eval/experiment_tau_schemes.py
+包含原始方案（τ = Cos(Q_base, Q_neg) + δ）和 QD-Max 方案（审稿人友好的尺度安全方案）。
 
 ## 评测指标定义
 
@@ -67,84 +51,21 @@ pMRR: 衡量指令敏感度
 - 方法：改进两阶段法 — changed-sim v2 确定 β，standard 评估确定 δ，α=1.0（奖惩等权原则）
 - 来源：dataset/FollowIR_train/train/train_param_search_v2_retrieval_topk1000_samaya-ai_RepLLaMA-reproduced_v2final_4B*.json
 
-**第一性原理推导（First-Principles Heuristics）**：
-- α=0.67, β=1.23, δ=0.05
-- 测试集 target_avg=0.2812（Core17_MAP=0.2590, Robust04_MAP=0.2717, News21_nDCG=0.3129）
-- 测试集 mean p-MRR=0.1039（Core17=0.1003, Robust04=0.0528, News21=0.1586）
-- 方法：基于向量空间几何性质的理论推导
-  - δ = k×σ_random（k=2, 95%置信噪声边际），σ_random≈0.026 为随机文档对余弦相似度标准差
-  - α = E[S_base|at-risk] / E[Softplus(S_neg-τ)|at-risk]（惩罚量级对齐）
-  - β = E[S_base|safe] / E[S_req×safety|safe]（增强量级对齐）
-- 来源：eval/first_principles_params.py, results/first_principles_params.json
+**第一性原理推导**：
 
-**第一性原理推导 V2（Neyman-Pearson 阈值 + KS 最大化）**：
-- α=0.5, β=1.0, δ=0.0
-- 测试集 mean p-MRR=0.1943（比网格搜索 +40.7%）
-- 测试集 target_avg=0.278
-- 方法：δ_k=0.0（Neyman-Pearson 阈值，τ=Cos(Q_base,Q_neg)），KS 最大化给出 α=0.5
-- 来源：eval/first_principles_params.py V3
+**详见**：[dsclr-param-derivation skill](../dsclr-param-derivation/SKILL.md) 的"第一性原理推导演进史（V1→V2→V4→V5）"章节。
 
-**第一性原理推导 V4（Scale Alignment，30 种方法）**：
-- α=1.0, β=1.29, δ=0.0
-- 测试集 mean p-MRR=0.2243（Core17=0.1828, Robust04=0.1986, News21=0.2916）
-- 测试集 target_avg=0.2631（Core17_cMAP=0.2366, Robust04_cMAP=0.2298, News21_cnDCG5=0.3229）
-- 方法：基于 30 种数学/物理统计推导方法，Scale Alignment 一致收敛
-  - δ=0.0（Neyman-Pearson 阈值）：τ = Cos(Q_base, Q_neg)，无噪声边际
-  - α=1.0（Scale Alignment）：E[S_base|at-risk] / E[Softplus(S_neg-τ)|at-risk] ≈ 1.0
-    - 物理意义：惩罚量级与 S_base 量级完全对齐，既不过度惩罚也不欠惩罚
-    - 多方法一致性验证：Scale Alignment (1.0), Percentile-50 (1.0), Percentile-75 (1.03) 均给出 α≈1.0
-    - 与 Half-Life 方法 (α=0.5) 的区别：Half-Life 只惩罚 50%，过于保守
-  - β=1.29（Scale Alignment for enhancement）：E[S_base|safe] / E[S_req×safety|safe] ≈ 1.29
-- 30 种 α 推导方法分类及 δ_k=0.0 下的结果：
-  - **Group A (Scale Alignment)**: α=1.0 — 惩罚量级对齐（最优）
-  - **Group B (Score Resolution)**: α=0.05~0.52 — 编码器分辨率
-  - **Group C (Distribution Separation)**: α=0.04~0.22 — 分布分离
-  - **Group D (Ranking-Specific)**: α=0.01~1.01 — 排序特异性
-  - **Group E (Physics-Informed)**: α=0.33~0.50 — 半衰期/信息论
-  - **Group F (Document-Aware, V4 new)**: α=0.00~6.15 — 文档感知/高级统计
-    - Score Entropy: α=6.15（Shannon 熵分辨率，过高）
-    - Kurtosis-Adjusted: α=0.065（尾部风险调整，过低）
-    - Skewness-Adjusted: α=0.068（偏度调整，过低）
-    - KL Minimization: α=0.12（信息投影，过低）
-    - Per-Document Score Variance: α=0.047（文档查询敏感度，过低）
-    - Chebyshev Coverage: α=0.10~0.23（分布无关覆盖保证）
-    - Percentile-50/75 Alignment: α=1.00~1.03（与 Scale Alignment 一致！）
-    - Effective Rank: α=0.002（有效秩，过低）
-    - Bayesian Posterior: α=752+（数据量过大导致先验被淹没）
-- **p-MRR vs target_avg 权衡分析**（β=1.29, δ=0.0）：
-
-| α | mean p-MRR | target_avg | 推导方法 |
-|---|-----------|-----------|---------|
-| 0.5 | 0.1999 | 0.2737 | Soft Half-Life / KS |
-| 1.0 | 0.2243 | 0.2631 | Scale Alignment / Percentile-50 |
-| 1.5 | 0.2486 | 0.2582 | — |
-| 2.0 | 0.2724 | 0.2483 | — |
-| 3.0 | 0.3205 | 0.2262 | — |
-
-- **关键发现**：α=1.0（Scale Alignment）是唯一有坚实物理意义的推导结果，p-MRR 比网格搜索 (0.1381) 提升 62.3%，target_avg 下降 6.4%
-- 来源：eval/first_principles_params.py V4, results/first_principles_params_v2.json
+**最终推荐（V5 δ=0.02）**：
+- α=0.72, β=1.32, δ=0.02
+- target_avg=0.2841（超过网格搜索 0.281），p-MRR=0.1687（比网格搜索高 22.1%）
 
 **参数策略对比（4B 改写模型）**：
 
-| 策略 | α | β | δ | target_avg | mean p-MRR | 理论依据 |
-|------|---|---|---|-----------|-----------|---------|
-| 网格搜索（测试集） | 0.5 | 1.0 | 0.0 | 0.281 | 0.1381 | 无（暴力搜索） |
-| 改进两阶段法（训练集） | 1.0 | 1.5 | 0.05 | **0.2828** | 0.1286 | 训练集统计+奖惩等权 |
-| 第一性原理 V1 | 0.67 | 1.23 | 0.05 | 0.2812 | 0.1039 | 向量空间几何+噪声边际 |
-| 第一性原理 V2 (NP+KS) | 0.5 | 1.0 | 0.0 | 0.278 | 0.1943 | NP 阈值+KS 最大化 |
-| 第一性原理 V4 (测试集推导) | 1.0 | 1.29 | 0.0 | 0.2631 | 0.2243 | 30 种方法一致性验证 |
-| 第一性原理 V5 (训练集推导, δ=0) | 0.72 | 1.46 | 0.0 | 0.2672 | 0.2152 | 训练集量级对齐 |
-| **第一性原理 V5 (训练集推导, δ=0.02)** | **0.72** | **1.32** | **0.02** | **0.2841** | **0.1687** | **训练集量级对齐+噪声边际** |
-
-**分析**：
-- **V5 δ=0.02 是推荐的平衡方案**：target_avg=0.2841 超过网格搜索(0.281)，p-MRR=0.1687 比网格搜索(0.1381)高 22.1%
-- **修复 τ 计算后**：τ = Cos(Q_base, Q_neg) + δ（之前错误地使用 τ = S_neg + δ，导致 at-risk ratio=0%）
-- **Robust04 MAP 从 0.2257 提升到 0.2533**，提升 12.2%
-- **β 从 1.926 降到 1.32**：修复后 at-risk ratio 从 0% 变为 ~5%，β 推导更准确
-- **α 从 1.0 降到 0.72**：修复后 at-risk 文档的 Softplus 值更大，惩罚更有效
-- **δ=0.02 的物理意义**：δ = 0.09 × σ(S_neg) ≈ 0.02，约 1/10 个标准差的噪声边际
-- **推导过程**：eval/first_principles_params_train.py，训练集 855 查询，878 正例，12825 负例
-- 来源：results/train_derived_params.json
+| 策略 | α | β | δ | target_avg | mean p-MRR |
+|------|---|---|---|-----------|-----------|
+| 网格搜索（测试集） | 0.5 | 1.0 | 0.0 | 0.281 | 0.1381 |
+| 改进两阶段法（训练集） | 1.0 | 1.5 | 0.05 | 0.2828 | 0.1286 |
+| **第一性原理 V5 (δ=0.02)** | **0.72** | **1.32** | **0.02** | **0.2841** | **0.1687** |
 
 ### Repllama 编码器 + Qwen3-8B 改写模型
 
@@ -577,19 +498,6 @@ NQ 查询是 factoid 问题，不包含真实否定信号。LLM 被强制生成 
 
 ## 编码器无关参数搜索策略（EAPS）
 
-1. **Retrieval-Simulated Distractor Sampling**：从所有负文档中按 S_base 降序取 top-k（k=1000），再从中采样 200 个干扰项
-2. **关键洞察**：不同编码器的 at-risk 比例差异巨大
-   - Mistral: 62.9% 负文档 S_neg > S_base，top-1000 at-risk=28.3%
-   - Repllama: 0% 负文档 S_neg > S_base，top-1000 at-risk=0.08%
-3. **top-k 选择**：k=1000 比 k=100 更好，因为更接近测试集的真实检索分布
-4. **δ 方向**：高 at-risk 编码器（如 Mistral）需要正 δ 来限制惩罚范围
-5. **改进两阶段法（v2）**：
-   - Stage 1: changed-sim v2 确定 β（avg over α, δ）
-   - Stage 2: standard 评估确定 δ（fixing β, avg over α）
-   - Stage 3: α=1.0（奖惩等权原则）
-   - 理由：α 在训练集上对检索质量影响极小（<3%），但在测试集上对 p-MRR 影响巨大
-   - δ=0.05 比 δ=0.10 更 p-MRR 友好，因为更低的 τ 使更多文档受 safety gate 保护
-6. **p-MRR 与 target_avg 的 trade-off**：
-   - α 越大 → p-MRR 越高，target_avg 越低
-   - α=1.0 是 Pareto 最优折中点：target_avg 与 α=0.5 持平，p-MRR 提升 335%
-   - 训练集 combined target_avg 与测试集 p-MRR 强负相关（r≈-0.87）
+**详见**：[dsclr-param-derivation skill](../dsclr-param-derivation/SKILL.md) 的"编码器无关参数搜索策略（EAPS）"章节。
+
+当第一性原理推导公式不适用时（如新编码器缺乏训练集 embeddings），可采用 EAPS 策略。包含 Retrieval-Simulated Distractor Sampling、改进两阶段法、p-MRR 与 target_avg 的 trade-off 分析等。

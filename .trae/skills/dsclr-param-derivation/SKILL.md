@@ -1,6 +1,6 @@
 ---
 name: "dsclr-param-derivation"
-description: "DeIR-Dual V2 第一性原理参数推导方案（V5 基础版 + V6/V7 safe-anchor 扩展版 + V8 per-query 推理时推导，训练集推导，学术规范，支持跨系列编码器泛化）。包含完整的参数推导公式、物理意义、代码实现和使用指南。"
+description: "DeIR-Dual V2 第一性原理参数推导方案（V5 基础版 + V6/V7 safe-anchor 扩展版 + V8 per-query 推理时推导 + V8.3 编码噪声解决方案 + V8.4 失败探索，训练集推导，学术规范，支持跨系列编码器泛化）。包含完整的参数推导公式、物理意义、代码实现、使用指南和已知局限性。"
 ---
 
 # DeIR-Dual V2 第一性原理参数推导方案
@@ -20,6 +20,136 @@ description: "DeIR-Dual V2 第一性原理参数推导方案（V5 基础版 + V6
 - **V6 safe-anchor 扩展版**：使用 LLM 生成的"无辜文档锚点"估计负向惩罚阈值 `τ = max(tau_anchor, cos_qbase_qneg) + anchor_delta`，并通过训练集 pos_docs 代理 + 覆盖率校正推导 α、β。**支持跨系列编码器泛化**（RepLLaMA / E5-Mistral / BGE 等）。详见下文"公式体系 V6"。
 - **V7 safe-anchor 改进版**：在 V6 基础上去除有害的 coverage_correction（anchor_delta>0 时会爆炸）并引入 β train/test 分布补偿因子。详见下文"公式体系 V7"。
 - **V8 per-query 推理时推导版（推荐，最严谨）**：在 V7 基础上将 α/β 推导从训练集全局计算改为**测试时逐 query 计算**，基于候选文档编码分布自适应生成 per-query α_q/β_q，无需训练集参数、无需预知测试集分布。**学术最严谨**（无任何全局参数泄露测试集信息），效果接近 V7（target_avg 差 1.2%，p-MRR 反超 1.4%）。详见下文"公式体系 V8"。
+
+## 第一性原理推导演进史（V1→V2→V4→V5）
+
+本节记录了第一性原理推导方法的演进历程，帮助理解最终 V5 推导公式的形成过程。
+
+### V1：向量空间几何 + 噪声边际（2026-05-13）
+
+**参数**：α=0.67, β=1.23, δ=0.05
+
+**方法**：基于向量空间几何性质的理论推导
+- δ = k×σ_random（k=2, 95%置信噪声边际），σ_random≈0.026 为随机文档对余弦相似度标准差
+- α = E[S_base|at-risk] / E[Softplus(S_neg-τ)|at-risk]（惩罚量级对齐）
+- β = E[S_base|safe] / E[S_req×safety|safe]（增强量级对齐）
+
+**结果**：测试集 target_avg=0.2812, mean p-MRR=0.1039
+
+**局限性**：δ=0.05 过大，导致 p-MRR 较低
+
+### V2：Neyman-Pearson 阈值 + KS 最大化（2026-05-13）
+
+**参数**：α=0.5, β=1.0, δ=0.0
+
+**方法**：
+- δ_k=0.0（Neyman-Pearson 阈值，τ=Cos(Q_base,Q_neg)），无噪声边际
+- KS 最大化给出 α=0.5（使 at-risk/non-at-risk 分离度最大化）
+
+**结果**：测试集 mean p-MRR=0.1943（比网格搜索 +40.7%），target_avg=0.278
+
+**局限性**：target_avg 低于 V1
+
+### V4：Scale Alignment 一致收敛（2026-05-13）
+
+**参数**：α=1.0, β=1.29, δ=0.0
+
+**方法**：基于 30 种数学/物理统计推导方法，Scale Alignment 一致收敛
+- δ=0.0（Neyman-Pearson 阈值）：τ = Cos(Q_base, Q_neg)，无噪声边际
+- α=1.0（Scale Alignment）：E[S_base|at-risk] / E[Softplus(S_neg-τ)|at-risk] ≈ 1.0
+  - 物理意义：惩罚量级与 S_base 量级完全对齐，既不过度惩罚也不欠惩罚
+  - 多方法一致性验证：Scale Alignment (1.0), Percentile-50 (1.0), Percentile-75 (1.03) 均给出 α≈1.0
+  - 与 Half-Life 方法 (α=0.5) 的区别：Half-Life 只惩罚 50%，过于保守
+- β=1.29（Scale Alignment for enhancement）：E[S_base|safe] / E[S_req×safety|safe] ≈ 1.29
+
+**30 种 α 推导方法分类及 δ_k=0.0 下的结果**：
+- **Group A (Scale Alignment)**: α=1.0 — 惩罚量级对齐（最优）
+- **Group B (Score Resolution)**: α=0.05~0.52 — 编码器分辨率
+- **Group C (Distribution Separation)**: α=0.04~0.22 — 分布分离
+- **Group D (Ranking-Specific)**: α=0.01~1.01 — 排序特异性
+- **Group E (Physics-Informed)**: α=0.33~0.50 — 半衰期/信息论
+- **Group F (Document-Aware, V4 new)**: α=0.00~6.15 — 文档感知/高级统计
+
+**结果**：测试集 mean p-MRR=0.2243, target_avg=0.2631
+
+**关键发现**：α=1.0（Scale Alignment）是唯一有坚实物理意义的推导结果，p-MRR 比网格搜索 (0.1381) 提升 62.3%，target_avg 下降 6.4%
+
+### V5：训练集推导 + 噪声边际优化（当前推荐）
+
+**参数（δ=0.02）**：α=0.72, β=1.32, δ=0.02
+
+**方法**：在 V4 基础上引入训练集推导和优化的噪声边际
+- δ=0.02 的物理意义：δ = 0.09 × σ(S_neg) ≈ 0.02，约 1/10 个标准差的噪声边际
+- α=0.72（训练集 at-risk 量级对齐）
+- β=1.32（训练集 safe 量级对齐）
+
+**结果**：测试集 target_avg=0.2841（超过网格搜索 0.281），mean p-MRR=0.1687（比网格搜索高 22.1%）
+
+**与 V1/V2/V4 对比**：
+
+| 策略 | α | β | δ | target_avg | mean p-MRR | 理论依据 |
+|------|---|---|---|-----------|-----------|---------|
+| 网格搜索（测试集） | 0.5 | 1.0 | 0.0 | 0.281 | 0.1381 | 无（暴力搜索） |
+| 改进两阶段法（训练集） | 1.0 | 1.5 | 0.05 | **0.2828** | 0.1286 | 训练集统计+奖惩等权 |
+| 第一性原理 V1 | 0.67 | 1.23 | 0.05 | 0.2812 | 0.1039 | 向量空间几何+噪声边际 |
+| 第一性原理 V2 (NP+KS) | 0.5 | 1.0 | 0.0 | 0.278 | 0.1943 | NP 阈值+KS 最大化 |
+| 第一性原理 V4 (测试集推导) | 1.0 | 1.29 | 0.0 | 0.2631 | 0.2243 | 30 种方法一致性验证 |
+| 第一性原理 V5 (训练集推导, δ=0) | 0.72 | 1.46 | 0.0 | 0.2672 | 0.2152 | 训练集量级对齐 |
+| **第一性原理 V5 (训练集推导, δ=0.02)** | **0.72** | **1.32** | **0.02** | **0.2841** | **0.1687** | **训练集量级对齐+噪声边际** |
+
+**V5 成为推荐方案的原因**：δ=0.02 是推荐的平衡方案，target_avg=0.2841 超过网格搜索(0.281)，p-MRR=0.1687 比网格搜索(0.1381)高 22.1%。
+
+**修复 τ 计算后的关键改进**：
+- τ = Cos(Q_base, Q_neg) + δ（之前错误地使用 τ = S_neg + δ，导致 at-risk ratio=0%）
+- Robust04 MAP 从 0.2257 提升到 0.2533，提升 12.2%
+- β 从 1.926 降到 1.32：修复后 at-risk ratio 从 0% 变为 ~5%，β 推导更准确
+- α 从 1.0 降到 0.72：修复后 at-risk 文档的 Softplus 值更大，惩罚更有效
+
+**推导过程**：eval/first_principles_params_train.py，训练集 855 查询，878 正例，12825 负例
+
+**来源**：results/train_derived_params.json
+
+## 编码器无关参数搜索策略（EAPS）
+
+当第一性原理推导公式不适用时（如新编码器缺乏训练集 embeddings），可采用 EAPS（Encoder-Agnostic Parameter Search）策略。
+
+### 1. Retrieval-Simulated Distractor Sampling
+
+从所有负文档中按 S_base 降序取 top-k（k=1000），再从中采样 200 个干扰项。
+
+**关键洞察**：不同编码器的 at-risk 比例差异巨大
+- Mistral: 62.9% 负文档 S_neg > S_base，top-1000 at-risk=28.3%
+- Repllama: 0% 负文档 S_neg > S_base，top-1000 at-risk=0.08%
+
+### 2. top-k 选择
+
+k=1000 比 k=100 更好，因为更接近测试集的真实检索分布。
+
+### 3. δ 方向
+
+高 at-risk 编码器（如 Mistral）需要正 δ 来限制惩罚范围。
+
+### 4. 改进两阶段法（v2）
+
+**Stage 1**: changed-sim v2 确定 β（avg over α, δ）
+**Stage 2**: standard 评估确定 δ（fixing β, avg over α）
+**Stage 3**: α=1.0（奖惩等权原则）
+
+**理由**：
+- α 在训练集上对检索质量影响极小（<3%），但在测试集上对 p-MRR 影响巨大
+- δ=0.05 比 δ=0.10 更 p-MRR 友好，因为更低的 τ 使更多文档受 safety gate 保护
+
+### 5. p-MRR 与 target_avg 的 trade-off
+
+**关键发现**：
+- α 越大 → p-MRR 越高，target_avg 越低
+- α=1.0 是 Pareto 最优折中点：target_avg 与 α=0.5 持平，p-MRR 提升 335%
+- 训练集 combined target_avg 与测试集 p-MRR 强负相关（r≈-0.87）
+
+**适用场景**：
+- Mistral/E5/BGE 等通用编码器：α=0.3, β=1.0, δ=0.05（top-1000 retrieval-simulated 采样 compromise）
+- 注意：Mistral at-risk 比例高达 62.9%，增大 α 会显著损害 test_ta，与 RepLLaMA（at-risk 0.08%）不同
+- 改进两阶段法不适用于高 at-risk 编码器：α=1.0 会使 test_ta 下降 4.2%（0.2742→0.2628）
 
 ## 公式体系 V5（基础版）
 
@@ -65,6 +195,28 @@ description: "DeIR-Dual V2 第一性原理参数推导方案（V5 基础版 + V6
 - 物理意义：增强一单位 ≈ 基础分一单位
 - 训练集推导结果：β ≈ 1.32（δ=0.02 时），β ≈ 1.46（δ=0.0 时）
 - β > 1 的原因：Q_plus 引入了原始查询没有的新信息，需要更大的增强权重
+
+### 4. 阈值方案变体
+
+**原始方案（默认，V5 使用）**：
+```
+τ = Cos(Q_base, Q_neg) + δ
+```
+- 直接使用 query-query 相似度作为阈值
+- 经验事实：Cos(Q_base, Q_neg) > S_neg（QQ 相似度 > QD 相似度），提供自然安全边际
+
+**QD-Max 方案（审稿人友好，尺度安全）**：
+```
+τ = max(Cos(Q_base, Q_neg), μ(S_neg) + k·σ(S_neg)) + δ
+```
+- 显式定义 QD 空间统计下界：`μ(S_neg) + k·σ(S_neg)`
+- max 操作不混尺度：两个候选阈值各自在自己的空间内定义
+- 当 Cos 异常低时（< μ(S_neg) + k·σ(S_neg)），QD 下界生效提供保护
+- **k 推导**：搜索使训练集 at-risk ratio 最接近原始方案的 k（通常 k=0）
+- **与原始方案等价性**：训练集中 Cos(Q_base, Q_neg) 分布双峰（60% 为 0，40% ≥ 0.40），当 k=0 时 qd_floor=μ(S_neg)≈0.18，对所有 Cos>0 的 query 不生效，因此结果与原始方案完全一致
+- **特殊处理**：Cos=0（[NONE] 查询）时不应用 qd_floor，因为 q_minus 为零向量，S_neg 无意义
+- 测试集结果：p-MRR=0.1691, target_avg=0.2851（与原始方案完全相同）
+- 来源：eval/experiment_tau_schemes.py
 
 ## 公式体系 V6（safe-anchor 扩展版）
 
@@ -589,6 +741,167 @@ V8.2 同时探索了更强的 penalty 函数（linear/scaled_linear/quadratic）
 4. **V8.2 anchor 略优于 hybrid**：quartic_gap anchor target_avg=0.2716（最高），hybrid avg p-MRR=0.1317（最高）。anchor 模式更简单且 target_avg 更优，推荐默认使用 anchor
 5. **V8.2 是 V8 系列最优方案**：target_avg 差距从 V8.1 的 -4.3% 缩小到 -2.6%，p-MRR 差距从 -9.7% 缩小到 -1.4%，且无需训练集参数，学术最严谨
 
+## 公式体系 V8.3（编码噪声问题与解决方案，工程关键）
+
+### 核心问题
+
+V8 实验中发现了一个重要的工程问题：**GPU float16 batch 编码会产生不确定性噪声**。
+
+**问题现象**：
+- RepLLaMA 在 GPU 上使用 `torch.cuda.amp.autocast()` 进行 float16 batch 编码
+- batch 内 padding 长度受其他文本影响（同一 batch 中最长文本决定 padding）
+- 相同输入在不同 batch 组合下会产生微小的编码差异（~0.001-0.003 相似度）
+- 这些差异被 safety gate 的 sigmoid 函数放大，导致排名变化
+
+**实验证据**（News21，修改 8 个 q_minus，对比 32 个 changed query）：
+- **og ranking**（不使用 q_minus）：0 个 query top-5 变化（编码器确定性，batch 组合不变）
+- **changed ranking**（使用 q_minus）：**22 个 query top-5 变化**（只修改了 8 个）
+- **信噪比分析**：
+  - 未修改组（24 个，控制组）：平均 |dN5| = 0.0309
+  - 修改组（8 个，实验组）：平均 |dN5| = 0.1780
+  - 信噪比 = 5.75，说明 q_minus 修改有效果，但编码噪声是显著混淆因素
+
+### 根本原因
+
+```python
+# 问题代码（eval/models/repllama_encoder.py:176）
+with torch.cuda.amp.autocast():  # float16 编码
+    with torch.no_grad():
+        outputs = self.model(**inputs)
+        # padding 长度由 batch 内最长文本决定
+        # 不同 batch 组合 → 不同 padding → 不同浮点累积顺序 → 微小差异
+```
+
+### 解决方案：batch_size=1 确定性编码
+
+**核心思路**：查询编码使用 batch_size=1，消除 padding 耦合，确保相同输入永远产生相同输出。
+
+**实现代码**（eval/experiment_safe_anchor_threshold.py:700-715）：
+
+```python
+# 编码查询时使用 batch_size=1，消除 batch padding 导致的 float16 编码噪声
+# 确保相同输入永远产生相同输出，无论其他 query 文本如何变化
+_orig_batch_size = self.batch_size
+self.batch_size = 1
+logger.info("📊 编码 OG Q_base/Q_req/Q_neg (batch_size=1, 消除编码噪声)...")
+q_base_emb_og = self._encode_queries(q_base_list_og)
+q_req_emb_og = self._encode_queries(q_req_list_og)
+q_neg_emb_og = self._encode_queries(q_neg_list_og)
+logger.info("📊 编码 Changed Q_base/Q_req/Q_neg (batch_size=1, 消除编码噪声)...")
+q_base_emb_ch = self._encode_queries(q_base_list_ch)
+q_req_emb_ch = self._encode_queries(q_req_list_ch)
+q_neg_emb_ch = self._encode_queries(q_neg_list_ch)
+self.batch_size = _orig_batch_size
+```
+
+**验证结果**（News21，batch_size=1 编码）：
+- **未修改 q_minus 的 query（24 个）top-5 变化数：0**（完全消除编码噪声）
+- **修改 q_minus 的 query（8 个）top-5 变化数：7**（真实效果）
+- **编码噪声完全消除**：所有未修改 query 的指标完全一致（dN5=0.0000, dAP=0.0000）
+
+### V8.3 关键发现
+
+1. **编码噪声是显著混淆因素**：在 batch 编码模式下，即使未修改 query 也会产生 ~0.03 的 |dN5| 噪声，信噪比仅 5.75
+2. **batch_size=1 完全消除噪声**：简单有效，速度影响小（News21 266 个查询文本，~50 秒编码），且保证实验严谨性
+3. **文档向量无需修改**：文档向量已缓存且 batch 组合不变，只需查询编码使用 batch_size=1
+4. **适用于所有 float16 编码器**：不仅是 RepLLaMA，所有使用 GPU float16 batch 编码的模型都存在此问题
+5. **必须作为 V8 实验标配**：任何涉及 query 编码对比的实验（如 q_minus 改进、dual_queries 版本对比）都必须使用 batch_size=1 编码，否则结果不可信
+
+## 公式体系 V8.4（q_minus 语义质量实验，失败探索）
+
+### 核心问题
+
+基于 V8.3 消除编码噪声后，进行了 q_minus 语义细化实验，发现了一个深层问题：**safety gate 与 q_minus 语义耦合**。
+
+### 实验设计
+
+**目标**：针对 8 个 AP 下降的 query，细化 q_minus 中过度泛化的否定实体，验证能否提升效果。
+
+**修改策略**：
+- q3 (Bib Gourmand): "loans" → "Bib Gourmand restaurant ratings, minibar restaurant reviews"
+- q7 (望远镜): "documents without images" → "general astronomy without telescope comparison, space telescope history without Hubble or Webb"
+- q9 (Khashoggi): "Khashoggi's death, investigations into his murder" → "murder investigation details, suspects and trial proceedings, forensic evidence and timeline of the killing"
+- q14 (贷款): "loans" → "payday loans, personal loans, loan interest rates, lending institutions"
+- q16 (植物食品): "non-plant-based products" → "meat and dairy products, animal-based food industry, traditional grocery items without plant-based alternatives"
+- q18 (PLD): "other countries, single state only" → "international cases of polio-like disease, foreign country PLD reports, single state cases without national context"
+- q22 (航空旅行): "air travel" → "domestic air travel, airline industry financial impact, flight cancellations, airport operations without foreign travel context"
+- q23 (日食): "historical eclipses before the most recent" → "ancient eclipse records, medieval eclipse observations, historical eclipse mythology and superstitions"
+
+### 实验结果（batch_size=1 确定性编码，News21）
+
+| 指标 | Baseline | Refined | 变化 |
+|------|----------|---------|------|
+| p-MRR | 0.1376 | 0.1784 | **+29.7%** |
+| CH_MAP@1000 | 0.2624 | 0.2609 | -0.0015 |
+| CH_nDCG@5 | 0.3041 | 0.2760 | **-0.0281** |
+
+**逐 query 对比（消除编码噪声后）**：
+
+| qidx | qid | dN5 | dAP | 评价 |
+|------|-----|-----|-----|------|
+| 3 | 941 (Bib Gourmand) | +0.0000 | +0.0091 | MAP 微升 |
+| 7 | 947 (望远镜) | **-0.3461** | +0.0721 | nDCG 暴跌，MAP 升 |
+| 9 | 949 (Khashoggi) | **-0.6261** | -0.0221 | 两者皆降 |
+| 14 | 956 (贷款) | -0.1432 | -0.0388 | 两者皆降 |
+| 16 | 958 (植物食品) | **-0.3392** | -0.0932 | 两者暴降 |
+| 18 | 960 (PLD) | -0.0307 | **+0.1218** | MAP 大升 |
+| 22 | 965 (航空旅行) | +0.0000 | -0.0337 | MAP 降 |
+| 23 | 966 (日食) | +0.0000 | -0.0660 | MAP 降 |
+
+### 失败根因分析：具体化悖论
+
+**核心矛盾**：细化 q_minus → 语义更具体 → 与 query 主题语义重叠 → tau_anchor 上升 → safety gate 更激进 → 误伤相关文档的 S_req 增强
+
+#### Case 1: q9 (949, Khashoggi) — 误触发惩罚
+
+| | tau_anchor | threshold | s_neg_max | penalized | nDCG@5 |
+|---|---|---|---|---|---|
+| orig | 0.709 | 0.729 | 0.702 | **0** | 0.626 |
+| refined | 0.626 | 0.646 | 0.652 | **6** | 0.000 |
+
+**分析**：refined q_minus "murder investigation details, suspects and trial proceedings" 语义更具体但与 query 主题（Khashoggi）重叠，导致 tau_anchor 下降（0.709→0.626），s_neg_max 超过 threshold，**触发惩罚 6 个文档，误杀相关文档**。
+
+#### Case 2: q16 (958, plant-based foods) — safety gate 过度抑制
+
+| | tau_anchor | s_neg_max | safety@top | nDCG@5 |
+|---|---|---|---|---|
+| orig | 0.640 | 0.527 | ~0.93 | 0.339 |
+| refined | 0.725 | 0.682 | ~0.71 | 0.000 |
+
+**分析**：refined q_minus "traditional grocery items without plant-based alternatives" 与 query（plant-based foods for grocery stores）语义高度重叠，tau_anchor 大幅上升（0.640→0.725），**safety gate 从 0.93 降到 0.71，S_req 增强被抑制 30%**。
+
+#### Case 3: q7 (947, telescopes) — safety gate 语义耦合
+
+| | tau_anchor | s_neg_max | nDCG@5 | MAP |
+|---|---|---|---|---|
+| orig | 0.457 | 0.427 | 0.737 | 0.297 |
+| refined | 0.712 | 0.669 | 0.391 | **0.369** |
+
+**分析**：refined q_minus "space telescope history without Hubble or Webb" 与 query（Hubble/James Webb compare）语义重叠。虽然 MAP 上升（整体排序改善），但 nDCG 下降（top-5 受损）。
+
+### 根本原因
+
+当前机制的 safety gate 阈值 `tau_safety = tau_anchor`，而 `tau_anchor = max(cos(q_minus, safe_anchor))`。当 q_minus 语义与 query 主题接近时：
+
+1. safe_anchor（相关文档）与 q_minus 的相似度自然高 → tau_anchor 上升
+2. safety gate 更激进 → `safety = 1 - sigmoid((S_neg - τ) × 20)` 降低
+3. S_req 增强被抑制 → `S_final = S_base + β × S_req × safety` 下降
+4. 相关文档排名下降 → nDCG@5 下降
+
+**这是一个"具体化悖论"**：q_minus 越具体，越容易与 query 主题语义重叠，反而破坏效果。
+
+### V8.4 关键发现
+
+1. **p-MRR 提升但 target_avg 下降**：q_minus 细化提升指令敏感度（p-MRR +29.7%），但损害检索质量（CH_nDCG@5 -9.2%）
+2. **具体化悖论是系统性问题**：8 个修改 query 中 5 个出现 nDCG 下降，且下降幅度与 tau_anchor 上升幅度正相关
+3. **问题不在 q_minus 质量而在机制设计**：safety gate 阈值依赖 tau_anchor，而 tau_anchor 依赖 q_minus 与 safe_anchor 的相似度，导致语义耦合
+4. **safety gate 应基于 S_req 绝对值**：高 S_req 文档不应被 safety 抑制，无论 S_neg 如何。当前机制错误地让 safety gate 依赖 S_neg（通过 tau_anchor）
+5. **q_minus 设计原则需调整**：q_minus 应描述"与 query 完全无关的领域"，而非"与 query 相关但应排除的子主题"。后者必然导致语义重叠
+6. **未来方向**：
+   - **解耦 safety gate**：safety gate 不依赖 tau_anchor，基于 S_req 绝对值判断（高 S_req 文档不应被抑制）
+   - **重构 tau_anchor 计算**：不应基于 cos(q_minus, safe_anchor)，而应基于 S_neg 分布或其他不依赖 q_minus 语义的信号
+   - **或放弃 safe-anchor 机制**：V5（无 anchor，δ=0.02）仍是 target_avg 最优方案（0.2841 vs V8.2 的 0.2716）
+
 ## 实现代码
 
 ### Python 实现（训练集推导）
@@ -1048,6 +1361,21 @@ safe-anchor 阈值场景（stat=max, mix=max, anchor_delta=+0.02），target_avg
     - **scale_factor=1.27 的适用性规律**：专用检索编码器（RepLLaMA LoRA、E5-Mistral 指令微调）tau_anchor/cos_qbase_qneg≈1.27，scale 模式最优；对比学习编码器（BGE）该比值≈1.01，应改用 proxy 模式
     - **退化解现象跨编码器一致**：三编码器上网格 target_avg 最优点（α≈0.3）均出现高 tavg/低 p-MRR 退化解，V7 通过 β 补偿自动避开该陷阱
 
+11. **编码噪声问题（V8.3 工程关键发现）**：
+    - **GPU float16 batch 编码存在不确定性**：batch padding 长度受其他文本影响，相同输入在不同 batch 组合下产生微小编码差异（~0.001-0.003），被 safety gate sigmoid 放大导致排名变化
+    - **batch_size=1 完全消除噪声**：查询编码使用 batch_size=1，消除 padding 耦合，确保相同输入永远产生相同输出。验证结果：未修改 query 的 top-5 变化数从 22 个降到 0 个
+    - **必须作为 V8 实验标配**：任何涉及 query 编码对比的实验（q_minus 改进、dual_queries 版本对比）都必须使用 batch_size=1 编码，否则结果不可信
+    - **适用于所有 float16 编码器**：不仅是 RepLLaMA，所有使用 GPU float16 batch 编码的模型都存在此问题
+    - 详见"公式体系 V8.3（编码噪声问题与解决方案，工程关键）"
+
+12. **safety gate 与 q_minus 语义耦合（V8.4 失败探索）**：
+    - **具体化悖论**：细化 q_minus → 语义更具体 → 与 query 主题语义重叠 → tau_anchor 上升 → safety gate 更激进 → 误伤 S_req 增强 → nDCG@5 下降
+    - **问题不在 q_minus 而在机制**：safety gate 阈值依赖 tau_anchor，而 tau_anchor 依赖 cos(q_minus, safe_anchor)，导致语义耦合。q_minus 越具体，越容易与 safe_anchor（相关文档）相似
+    - **p-MRR 提升但 target_avg 下降**：q_minus 细化实验（8 个 query）显示 p-MRR +29.7%，但 CH_nDCG@5 -9.2%，8 个修改 query 中 5 个出现 nDCG 下降
+    - **q_minus 设计原则需调整**：q_minus 应描述"与 query 完全无关的领域"，而非"与 query 相关但应排除的子主题"。后者必然导致语义重叠和 tau_anchor 上升
+    - **未来方向**：解耦 safety gate（基于 S_req 绝对值而非 tau_anchor），或放弃 safe-anchor 机制（V5 target_avg=0.2841 仍是最优）
+    - 详见"公式体系 V8.4（q_minus 语义质量实验，失败探索）"
+
 ## 相关文件
 
 ### V5 基础版
@@ -1119,3 +1447,20 @@ safe-anchor 阈值场景（stat=max, mix=max, anchor_delta=+0.02），target_avg
 - per-query 统计（含 α/β/S_base/S_req/S_neg/safety 分布）：
   - `results/safe_anchor_v8_*/{Core17,Robust04,News21}/per_query_stats.json`
 - 测试集资源（与 V6/V7/V8 共用）
+
+### V8.3 编码噪声问题与解决方案（工程关键）
+- 评测脚本：`/home/luwa/Documents/DSCLR/eval/experiment_safe_anchor_threshold.py`（line 700-715，batch_size=1 编码）
+- 编码器实现：`/home/luwa/Documents/DSCLR/eval/models/repllama_encoder.py`（line 176，torch.cuda.amp.autocast 问题代码）
+- baseline 结果（batch 编码，有噪声）：`results/safe_anchor_v8_adaptive_tsafety_v5/News21/`
+- refined q_minus 结果（batch 编码，有噪声）：`results/safe_anchor_v8_qminus_refined_v1/`
+- baseline 结果（batch_size=1，无噪声）：`results/safe_anchor_v8_qminus_baseline_det/`
+- refined q_minus 结果（batch_size=1，无噪声）：`results/safe_anchor_v8_qminus_refined_det/`
+- 验证脚本（编码噪声分析）：见实验记录，对比 og ranking vs changed ranking 的 top-5 变化数
+
+### V8.4 q_minus 语义质量实验（失败探索）
+- refined dual_queries 文件：`dataset/FollowIR_test/dual_queries_v6/dual_queries_v6_News21InstructionRetrieval_qminus_refined.jsonl`（修改 8 个 q_minus）
+- baseline dual_queries 文件：`dataset/FollowIR_test/dual_queries_v6/dual_queries_v6_News21InstructionRetrieval.jsonl`（原始版本）
+- baseline 结果（batch_size=1，确定性编码）：`results/safe_anchor_v8_qminus_baseline_det/metrics_summary.json`
+- refined 结果（batch_size=1，确定性编码）：`results/safe_anchor_v8_qminus_refined_det/metrics_summary.json`
+- per-query 对比分析：见实验记录，q9/q16/q7 的 debug_anchor_logs 对比（tau_anchor/s_neg_max/penalized 变化）
+- safe anchors 文件：`dataset/FollowIR_test/safe_anchors/safe_anchors_news21.json`（LLM 生成的无辜文档锚点）
