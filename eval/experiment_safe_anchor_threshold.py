@@ -135,10 +135,11 @@ class SafeAnchorDeIREvaluator(DeIRDualV2Evaluator):
         ab_clip_alpha: tuple = (0.1, 5.0),
         ab_clip_beta: tuple = (0.0, 10.0),
         beta_derive_mode: str = "mean",  # V8: mean|std|range|topk_mean
-        penalty_tau_mode: str = "anchor",  # V8.1: anchor|s_neg_pctl|hybrid|hybrid_floor
+        penalty_tau_mode: str = "anchor",  # V8.1: anchor|s_neg_pctl|hybrid|hybrid_floor|bg_leakage
         penalty_percentile: float = 90.0,  # V8.1: percentile for s_neg_pctl/hybrid modes
         penalty_func: str = "softplus",  # V8.2: softplus|linear|scaled_linear|quadratic
         penalty_scale: float = 1.0,  # V8.2: scale factor for linear/scaled_linear/quadratic
+        penalty_lambda: float = 2.0,  # bg_leakage: λ for m_q = λ × MAD(R_neg)
         adaptive_t_safety: bool = False,  # V8.3: per-query 自适应 t_safety
         adaptive_safety_threshold: float = 0.92,  # safety_mean 低于此值时触发降 t_safety
         adaptive_t_safety_min: float = 3.0,  # 自适应 t_safety 下限保护
@@ -159,6 +160,7 @@ class SafeAnchorDeIREvaluator(DeIRDualV2Evaluator):
         self.penalty_percentile = penalty_percentile
         self.penalty_func = penalty_func
         self.penalty_scale = penalty_scale
+        self.penalty_lambda = penalty_lambda
         self.adaptive_t_safety = adaptive_t_safety
         self.adaptive_safety_threshold = adaptive_safety_threshold
         self.adaptive_t_safety_min = adaptive_t_safety_min
@@ -421,8 +423,13 @@ class SafeAnchorDeIREvaluator(DeIRDualV2Evaluator):
         # - s_neg_pctl: τ = P_percentile(S_neg)，确保 top (100-p)% 文档 at-risk
         # - hybrid: τ = min(anchor_threshold, P_percentile(S_neg))，保守上限
         # - hybrid_floor: τ = max(min(anchor_threshold, P_percentile(S_neg)), cos_qbase_qneg_orig)
+        # - bg_leakage: 跨尺度残差惩罚，背景泄漏预期 + MAD 阈值（V8.5）
         anchor_tau = cos_qbase_qneg + delta  # 原 safe-anchor 阈值
-        if self.penalty_tau_mode == "s_neg_pctl" and s_neg.numel() > 1:
+        bg_leakage_mode = self.penalty_tau_mode == "bg_leakage"
+        if bg_leakage_mode:
+            # bg_leakage 模式下 tau_penalty 仅用于 safety gate，惩罚由残差机制独立处理
+            tau_penalty = anchor_tau
+        elif self.penalty_tau_mode == "s_neg_pctl" and s_neg.numel() > 1:
             p = self.penalty_percentile / 100.0
             tau_penalty = float(torch.quantile(s_neg.float(), p).item())
         elif self.penalty_tau_mode == "hybrid" and s_neg.numel() > 1:
@@ -471,30 +478,61 @@ class SafeAnchorDeIREvaluator(DeIRDualV2Evaluator):
             safety = 1.0 - torch.sigmoid((s_neg - tau_safety) * t_safety_q)
 
         overflow = s_neg - tau_penalty
-        # V8.2: penalty function selection
-        if self.penalty_func == "linear":
-            # 线性惩罚：max(0, overflow)，penalty_scale 控制整体强度
-            smooth_penalty = F.relu(overflow) * self.penalty_scale
-        elif self.penalty_func == "scaled_linear":
-            # 缩放线性：将 overflow 归一化到 S_base 量级后再乘 penalty_scale
-            # overflow 范围通常 0~0.05，S_base 范围通常 0.4~0.8
-            # scale = mean(S_base) / mean(overflow|at-risk) 让惩罚能量与 S_base 同量级
-            at_risk_tmp = overflow > 0
-            if at_risk_tmp.any():
-                mean_overflow = overflow[at_risk_tmp].mean()
-                mean_sbase = s_base[at_risk_tmp].mean()
-                if mean_overflow > 1e-8:
-                    auto_scale = (mean_sbase / mean_overflow).item() * self.penalty_scale
+
+        # V8.5: bg_leakage 跨尺度残差惩罚
+        # 核心思想：cos(Q_base, Q_neg) 表示 query overlap，转译到 QD 空间后得到
+        # "仅因背景相关而在 negative channel 上预期的得分"，只惩罚超过此预期的残差。
+        if bg_leakage_mode:
+            c_q = cos_qbase_qneg  # query-query overlap
+            mu_b = s_base.mean()
+            sigma_b = s_base.std()
+            mu_n = s_neg.mean()
+            sigma_n = s_neg.std()
+            # 背景泄漏预期：如果文档只因为符合 base query 而在 negative channel 得分高，
+            # 它的 S_neg 大概应该是多少
+            if sigma_b > 1e-8:
+                z_b = (s_base - mu_b) / sigma_b
+            else:
+                z_b = torch.zeros_like(s_base)
+            s_neg_bg = mu_n + sigma_n * c_q * z_b
+            # 残差：真正的 negative evidence（超出背景泄漏预期的部分）
+            R_neg = s_neg - s_neg_bg
+            # MAD-based robust threshold: m_q = λ × MAD(R_neg)
+            # MAD = median(|R_neg - median(R_neg)|)，1.4826 使其与标准差一致（正态假设下）
+            if R_neg.numel() > 1:
+                median_R = R_neg.median()
+                mad_R = (R_neg - median_R).abs().median() * 1.4826
+                m_q = self.penalty_lambda * mad_R
+            else:
+                m_q = 0.0
+            # 惩罚项 P_q(d) = [R_neg(d) - m_q]+，只惩罚超过阈值的残差
+            overflow = R_neg - m_q  # 重定义 overflow 为残差超出阈值部分
+            smooth_penalty = F.softplus(overflow)
+        else:
+            # V8.2: penalty function selection (传统模式)
+            if self.penalty_func == "linear":
+                # 线性惩罚：max(0, overflow)，penalty_scale 控制整体强度
+                smooth_penalty = F.relu(overflow) * self.penalty_scale
+            elif self.penalty_func == "scaled_linear":
+                # 缩放线性：将 overflow 归一化到 S_base 量级后再乘 penalty_scale
+                # overflow 范围通常 0~0.05，S_base 范围通常 0.4~0.8
+                # scale = mean(S_base) / mean(overflow|at-risk) 让惩罚能量与 S_base 同量级
+                at_risk_tmp = overflow > 0
+                if at_risk_tmp.any():
+                    mean_overflow = overflow[at_risk_tmp].mean()
+                    mean_sbase = s_base[at_risk_tmp].mean()
+                    if mean_overflow > 1e-8:
+                        auto_scale = (mean_sbase / mean_overflow).item() * self.penalty_scale
+                    else:
+                        auto_scale = self.penalty_scale
                 else:
                     auto_scale = self.penalty_scale
-            else:
-                auto_scale = self.penalty_scale
-            smooth_penalty = F.relu(overflow) * auto_scale
-        elif self.penalty_func == "quadratic":
-            # 二次惩罚：max(0, overflow)² × scale，对高 S_neg 文档施加更强惩罚
-            smooth_penalty = (F.relu(overflow) ** 2) * self.penalty_scale
-        else:  # softplus (default)
-            smooth_penalty = F.softplus(overflow)
+                smooth_penalty = F.relu(overflow) * auto_scale
+            elif self.penalty_func == "quadratic":
+                # 二次惩罚：max(0, overflow)² × scale，对高 S_neg 文档施加更强惩罚
+                smooth_penalty = (F.relu(overflow) ** 2) * self.penalty_scale
+            else:  # softplus (default)
+                smooth_penalty = F.softplus(overflow)
 
         # V8: per-query α/β derivation from candidate document distribution
         if self.per_query_ab:
@@ -549,7 +587,23 @@ class SafeAnchorDeIREvaluator(DeIRDualV2Evaluator):
                 "gap_sbase_sreward": float(s_base.mean().item() - s_reward_eff.mean().item()),
                 "t_safety_q": float(self._current_t_safety_q),  # V8.3: 自适应 t_safety
                 "tau_safety": float(tau_safety) if self.safety_tau_mode != "off" else 0.0,
+                "penalty_tau_mode": self.penalty_tau_mode,
             })
+            # V8.5: bg_leakage 专用诊断信息
+            if bg_leakage_mode:
+                self._per_query_stats[-1].update({
+                    "bg_c_q": float(c_q),
+                    "bg_mu_b": float(mu_b.item()),
+                    "bg_sigma_b": float(sigma_b.item()),
+                    "bg_mu_n": float(mu_n.item()),
+                    "bg_sigma_n": float(sigma_n.item()),
+                    "bg_m_q": float(m_q) if isinstance(m_q, float) else float(m_q.item()),
+                    "bg_R_neg_mean": float(R_neg.mean().item()),
+                    "bg_R_neg_std": float(R_neg.std().item()),
+                    "bg_R_neg_max": float(R_neg.max().item()),
+                    "bg_s_neg_bg_mean": float(s_neg_bg.mean().item()),
+                    "bg_s_neg_bg_max": float(s_neg_bg.max().item()),
+                })
             alpha = alpha_q
             beta = beta_q
 
@@ -722,12 +776,14 @@ class SafeAnchorDeIREvaluator(DeIRDualV2Evaluator):
         has_req_mask_ch = has_req_mask_ch.to(device)
         has_neg_mask_ch = has_neg_mask_ch.to(device)
 
-        S_base_og = torch.matmul(q_base_emb_og, self.retriever.doc_embeddings.T)
-        S_req_og = torch.matmul(q_req_emb_og, self.retriever.doc_embeddings.T)
-        S_neg_og = torch.matmul(q_neg_emb_og, self.retriever.doc_embeddings.T) * has_neg_mask_og.unsqueeze(1)
-        S_base_ch = torch.matmul(q_base_emb_ch, self.retriever.doc_embeddings.T)
-        S_req_ch = torch.matmul(q_req_emb_ch, self.retriever.doc_embeddings.T)
-        S_neg_ch = torch.matmul(q_neg_emb_ch, self.retriever.doc_embeddings.T) * has_neg_mask_ch.unsqueeze(1)
+        # 确保 dtype 一致（查询向量可能是 float16，文档向量是 float32）
+        doc_emb_T = self.retriever.doc_embeddings.T.float()
+        S_base_og = torch.matmul(q_base_emb_og.float(), doc_emb_T)
+        S_req_og = torch.matmul(q_req_emb_og.float(), doc_emb_T)
+        S_neg_og = torch.matmul(q_neg_emb_og.float(), doc_emb_T) * has_neg_mask_og.unsqueeze(1)
+        S_base_ch = torch.matmul(q_base_emb_ch.float(), doc_emb_T)
+        S_req_ch = torch.matmul(q_req_emb_ch.float(), doc_emb_T)
+        S_neg_ch = torch.matmul(q_neg_emb_ch.float(), doc_emb_T) * has_neg_mask_ch.unsqueeze(1)
 
         # ---- 原始 Cos(Q_base, Q_neg) ----
         cos_qbase_qneg_og = F.cosine_similarity(q_base_emb_og, q_neg_emb_og, dim=1)
@@ -984,6 +1040,7 @@ def run_safe_anchor_experiment(
     penalty_percentile: float = 90.0,
     penalty_func: str = "softplus",
     penalty_scale: float = 1.0,
+    penalty_lambda: float = 2.0,
     adaptive_t_safety: bool = False,
     adaptive_safety_threshold: float = 0.92,
     adaptive_t_safety_min: float = 3.0,
@@ -1014,6 +1071,7 @@ def run_safe_anchor_experiment(
         penalty_percentile=penalty_percentile,
         penalty_func=penalty_func,
         penalty_scale=penalty_scale,
+        penalty_lambda=penalty_lambda,
         adaptive_t_safety=adaptive_t_safety,
         adaptive_safety_threshold=adaptive_safety_threshold,
         adaptive_t_safety_min=adaptive_t_safety_min,
@@ -1058,8 +1116,8 @@ if __name__ == "__main__":
                                  "at_risk_comp", "multi_signal", "quartic_comp", "quartic_gap"],
                         help="V8: β 推导模式")
     parser.add_argument("--penalty_tau_mode", type=str, default="anchor",
-                        choices=["anchor", "s_neg_pctl", "hybrid", "hybrid_floor"],
-                        help="V8.1: 惩罚阈值模式 (anchor=传统safe-anchor, s_neg_pctl=S_neg分位数, hybrid=min两者, hybrid_floor=带cos下限)")
+                        choices=["anchor", "s_neg_pctl", "hybrid", "hybrid_floor", "bg_leakage"],
+                        help="V8.1: 惩罚阈值模式 (anchor=传统safe-anchor, s_neg_pctl=S_neg分位数, hybrid=min两者, hybrid_floor=带cos下限, bg_leakage=跨尺度残差惩罚V8.5)")
     parser.add_argument("--penalty_percentile", type=float, default=90.0,
                         help="V8.1: s_neg_pctl/hybrid 模式下的 S_neg 分位数 (默认 P90)")
     parser.add_argument("--penalty_func", type=str, default="softplus",
@@ -1067,6 +1125,8 @@ if __name__ == "__main__":
                         help="V8.2: 惩罚函数 (softplus=默认, linear=线性, scaled_linear=自动缩放线性, quadratic=二次)")
     parser.add_argument("--penalty_scale", type=float, default=1.0,
                         help="V8.2: linear/scaled_linear/quadratic 模式下的惩罚缩放因子")
+    parser.add_argument("--penalty_lambda", type=float, default=2.0,
+                        help="V8.5: bg_leakage 模式下的 MAD 倍数 λ (m_q = λ × MAD(R_neg))")
     parser.add_argument("--adaptive_t_safety", type=str, default="false",
                         help="V8.3: 启用 per-query 自适应 t_safety")
     parser.add_argument("--adaptive_safety_threshold", type=float, default=0.92,
@@ -1100,6 +1160,7 @@ if __name__ == "__main__":
         penalty_percentile=args.penalty_percentile,
         penalty_func=args.penalty_func,
         penalty_scale=args.penalty_scale,
+        penalty_lambda=args.penalty_lambda,
         adaptive_t_safety=args.adaptive_t_safety.lower() == "true",
         adaptive_safety_threshold=args.adaptive_safety_threshold,
         adaptive_t_safety_min=args.adaptive_t_safety_min,

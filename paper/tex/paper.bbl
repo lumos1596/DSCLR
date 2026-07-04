@@ -1,9 +1,21 @@
 \begin{thebibliography}{10}
 
+\bibitem{amati2002dfr}
+Gianni Amati and Cornelis~Joost Van~Rijsbergen.
+\newblock Probabilistic models of information retrieval based on measuring the
+  divergence from randomness.
+\newblock {\em ACM Transactions on Information Systems (TOIS)}, 2002.
+
 \bibitem{tart2022}
 Akari Asai et~al.
 \newblock Task-aware retrieval with instructions.
 \newblock In {\em arXiv preprint arXiv:2211.09260}, 2022.
+
+\bibitem{conneau2018wordtranslation}
+Alexis Conneau, Guillaume Lample, Marc'Aurelio Ranzato, Ludovic Denoyer, and
+  Herv{\'e} J{\'e}gou.
+\newblock Word translation without parallel data.
+\newblock In {\em International Conference on Learning Representations}, 2018.
 
 \bibitem{gao2023hyde}
 Luyu Gao, Xueguang Ma, Jimmy Lin, and Jamie Callan.
@@ -15,11 +27,10 @@ Dirk Groeneveld, Iz~Beltagy, Pete Walsh, Akshita Bhagia, Rodney Kinney, et~al.
 \newblock Olmo: Accelerating the science of language models.
 \newblock {\em arXiv preprint arXiv:2402.00838}, 2024.
 
-\bibitem{karpukhin2020dpr}
-Vladimir Karpukhin, Barlas Oguz, Sewon Min, Patrick Lewis, Ledell Wu, Sergey
-  Edunov, Danqi Chen, and Wen-tau Yih.
-\newblock Dense passage retrieval for open-domain question answering.
-\newblock In {\em EMNLP}, 2020.
+\bibitem{guo2017temperature}
+Chuan Guo, Geoff Pleiss, Yu~Sun, and Kilian~Q Weinberger.
+\newblock On calibration of modern neural networks.
+\newblock In {\em ICML}, 2017.
 
 \bibitem{followir2024}
 Gehan Kotonya et~al.
@@ -55,6 +66,12 @@ Long Ouyang, Jeff Wu, Xu~Jiang, Diogo Almeida, Carroll Wainwright, Pamela
   Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et~al.
 \newblock Training language models to follow instructions with human feedback.
 \newblock {\em NeurIPS}, 2022.
+
+\bibitem{platt1999probabilistic}
+John Platt.
+\newblock Probabilistic outputs for support vector machines and comparisons to
+  regularized likelihood methods.
+\newblock {\em Advances in Large Margin Classifiers}, 1999.
 
 \bibitem{raudaschl2024ragfusion}
 Simon Raudaschl.

@@ -74,12 +74,21 @@ class BEIRDataLoader:
         self.split = split
         self.short_name = dataset_name.split("/")[-1] if "/" in dataset_name else dataset_name
 
-    def load_corpus(self) -> Dict[str, Dict[str, str]]:
+    def load_corpus(self, max_corpus: int = 0, required_doc_ids: Optional[set] = None) -> Dict[str, Dict[str, str]]:
         logger.info(f"📂 Loading corpus from {self.dataset_name}...")
         ds = datasets.load_dataset(self.dataset_name, "corpus", split="corpus")
         corpus = {}
+        missing_required = set(required_doc_ids) if required_doc_ids else set()
+
         for d in tqdm(ds, desc="Loading corpus"):
             doc_id = str(d["_id"])
+            is_required = doc_id in missing_required
+
+            if not is_required and max_corpus > 0 and len(corpus) >= max_corpus:
+                if not missing_required:
+                    break
+                continue
+
             title = str(d.get("title", ""))
             text = str(d.get("text", ""))
             if title and title != "None":
@@ -87,7 +96,15 @@ class BEIRDataLoader:
             else:
                 full_text = text
             corpus[doc_id] = {"text": full_text, "title": title, "body": text}
-        logger.info(f"✅ Loaded {len(corpus)} documents")
+
+            if is_required:
+                missing_required.discard(doc_id)
+
+        total_required = len(required_doc_ids) if required_doc_ids else 0
+        found_required = total_required - len(missing_required)
+        logger.info(f"✅ Loaded {len(corpus)} documents (required: {found_required}/{total_required})")
+        if missing_required:
+            logger.warning(f"⚠️ Missing {len(missing_required)} required documents")
         return corpus
 
     def load_queries(self) -> Dict[str, str]:
@@ -134,6 +151,7 @@ class BEIREvaluator:
         cache_dir: Optional[str] = None,
         split: str = "test",
         max_queries: int = 0,
+        max_corpus: int = 0,
     ):
         self.dataset_name = dataset_name
         self.short_name = dataset_name.split("/")[-1] if "/" in dataset_name else dataset_name
@@ -147,6 +165,7 @@ class BEIREvaluator:
         self.max_seq_length = max_seq_length
         self.cache_checkpoint_interval = max(1, cache_checkpoint_interval)
         self.max_queries = max_queries
+        self.max_corpus = max_corpus
 
         if device == "auto":
             try:
@@ -386,9 +405,19 @@ class BEIREvaluator:
 
         start_time = time.time()
 
-        corpus = self.data_loader.load_corpus()
         queries = self.data_loader.load_queries()
         qrels = self.data_loader.load_qrels()
+
+        required_doc_ids: set = set()
+        for qid, doc_dict in qrels.items():
+            for did in doc_dict.keys():
+                required_doc_ids.add(did)
+        logger.info(f"📋 Required doc ids (from qrels): {len(required_doc_ids)}")
+
+        corpus = self.data_loader.load_corpus(
+            max_corpus=self.max_corpus,
+            required_doc_ids=required_doc_ids,
+        )
 
         eval_queries = {qid: text for qid, text in queries.items() if qid in qrels}
         logger.info(f"📊 Evaluating on {len(eval_queries)} queries (with qrels)")
@@ -521,7 +550,7 @@ class BEIREvaluator:
             valid_mask = indices >= 0
             if valid_mask.sum() == 0:
                 continue
-            valid_indices = indices[valid_mask].to(self.device)
+            valid_indices = indices[valid_mask]
 
             doc_emb_selected = rerank_doc_embeddings[valid_indices].to(self.device)
             s_base = torch.matmul(q_base_emb[i].unsqueeze(0), doc_emb_selected.T).squeeze(0)
@@ -796,6 +825,8 @@ def main():
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--max_queries", type=int, default=0,
                         help="Max queries to evaluate (0 = all, prefer dual queries)")
+    parser.add_argument("--max_corpus", type=int, default=0,
+                        help="Max corpus documents to load (0 = full corpus)")
 
     args = parser.parse_args()
 
@@ -823,6 +854,7 @@ def main():
         cache_dir=args.cache_dir if args.cache_dir else None,
         split=args.split,
         max_queries=args.max_queries,
+        max_corpus=args.max_corpus,
     )
 
     result = evaluator.run(alphas=alphas, betas=betas, deltas=deltas)

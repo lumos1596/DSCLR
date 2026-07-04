@@ -73,16 +73,17 @@ through semantic enhancement but lose instruction sensitivity
 (p-MRR $\approx$ 0). We propose \method{}, which decomposes an
 instruction into a positive enhancement query ($\qpos$) and a
 negative exclusion query ($\qminus$), then applies a training-free
-dual-track scoring mechanism with a dynamic semantic threshold
-$\tau = \cos(\mathbf{h}_{\text{base}}, \mathbf{h}_{\text{neg}}) + \delta$. Our key findings are:
-(1) a first-principles \emph{Scale Alignment} derivation converges
-to $\alpha = 1.0$ across 30 independent methods, improving p-MRR by
-70.9\% over grid search; (2) \method{} outperforms six baselines by
-9--44$\times$ in p-MRR while achieving the highest retrieval quality
-(target\_avg) on the FollowIR benchmark; (3) cross-modal validation
-across 7+ datasets confirms broad applicability; and (4) we identify
-and analyze a \emph{semantic entanglement} failure mode with a
-conservative prompting remedy.
+decision-layer scoring mechanism that estimates background leakage in
+the negative channel and penalizes only residual exclusion evidence.
+Our key findings are:
+(1) inference-time score calibration derives query-specific
+$\alpha_q$ and $\beta_q$ from candidate-set score distributions,
+avoiding labeled validation data and test-set grid search; (2)
+\method{} outperforms six baselines by 9--44$\times$ in p-MRR while
+achieving the highest retrieval quality (target\_avg) on the FollowIR
+benchmark; (3) cross-modal validation across 7+ datasets confirms broad
+applicability; and (4) we identify and analyze a \emph{semantic
+entanglement} failure mode with a conservative prompting remedy.
 
 Code: \url{https://github.com/...}
 \end{abstract}
@@ -161,8 +162,8 @@ rephrasings can cleanly separate them.  The solution is not to rewrite
 \emph{more}, but to rewrite \emph{structurally}: decompose the
 instruction into independent channels --- including an explicit
 exclusion channel --- and resolve their signals at the \textbf{decision
-layer}, where non-linear logic can selectively suppress trap documents
-without distorting the embedding geometry.
+layer}, where nonlinear score composition can selectively suppress trap
+documents without distorting the embedding geometry.
 
 We propose \method{} (\textbf{De}composition-based
 \textbf{I}nstruction-\textbf{R}ewriting with \textbf{Dual}-track
@@ -171,22 +172,22 @@ scoring layer.  \method{} first prompts an LLM to decompose an
 instruction into a positive query ($\qpos$) and a negative query
 ($\qminus$), which are encoded alongside the base query ($\qbase$)
 through a frozen dense retriever.  These three channels feed into a
-dual-track scoring mechanism: a \textbf{penalty track} with a dynamic
-semantic threshold $\tau = \cos(\mathbf{h}_{\text{base}},
-\mathbf{h}_{\text{neg}})$ that anchors the exclusion boundary to the
-query-instruction affinity, and a \textbf{reward track} gated by a
-conditional Safety Gate that severs the enhancement signal when a
-document triggers the exclusion constraint.  This non-linear coupling
---- which we show implements a logical-NOT in embedding space --- is
+decision-layer scoring mechanism that first estimates the
+negative-channel score expected from background relevance, then uses
+the residual above this estimate as exclusion evidence.  The residual
+signal drives both a penalty term and a conditional gate on the
+positive reward, enabling selective suppression of documents that
+match the exclusion constraint while preserving documents supported by
+the base and positive channels.  This nonlinear score composition is
 what linear vector methods cannot replicate, and it comes at zero
 training cost: \method{} requires no fine-tuning, no embedding
 modification, and no annotated instruction pairs.
 
 Our experiments reveal four findings.  First, scoring parameters need
-not be empirically tuned: a \textbf{Scale Alignment Principle} derived
-from the intrinsic statistics of the embedding space yields
-$\alpha = 1.0$ across 30 independent derivation strategies, improving
-p-MRR by 70.9\% over grid search while eliminating test-set leakage.
+not be empirically tuned: inference-time score calibration derives
+query-specific $\alpha_q$ and $\beta_q$ from the candidate scores
+produced by the retriever, avoiding labeled validation data and
+test-set grid search.
 Second, on the FollowIR benchmark \cite{followir2024}, \method{}
 outperforms six baselines by 9--44$\times$ in p-MRR while achieving
 the highest retrieval quality (target\_avg) --- despite never being
@@ -202,10 +203,11 @@ In summary, our contributions are: \textbf{(i)} \method{}, a
 training-free decision-layer framework that shifts
 instruction-following from a training problem to a scoring problem,
 achieving the highest p-MRR and retrieval quality on FollowIR without
-model fine-tuning; \textbf{(ii)} the Scale Alignment Principle, a
-principled calibration framework that derives scoring parameters from
-the retriever's own score distributions rather than from test-set
-grid search; and \textbf{(iii)} an empirical characterization of
+model fine-tuning; \textbf{(ii)} an inference-time score
+calibration method that derives query-specific scoring coefficients
+from the retriever's own candidate-set score distributions rather than
+from labeled validation data or test-set grid search; and
+\textbf{(iii)} an empirical characterization of
 semantic entanglement, the key failure mode limiting training-free
 instruction-following retrieval.
 
@@ -391,150 +393,151 @@ system would lose the ``less directly-relevant background info'' that
 annotators use to understand the query, degrading performance on
 queries where context matters.
 
-\subsection{Dual-Track Scoring and Non-Linear Coupling}
+\subsection{Decision-Layer Score Composition}
 \label{sec:scoring-formula}
 
-Given the three query encodings, we compute cosine similarities:
-$\sbase = \cos(\mathbf{h}_{\text{base}}, \mathbf{v}_d)$,
-$\spos = \cos(\mathbf{h}_{\text{pos}}, \mathbf{v}_d)$,
-$\sneg = \cos(\mathbf{h}_{\text{neg}}, \mathbf{v}_d)$.
-Unlike simple linear query expansion, our framework explicitly models the
-interaction between intent enhancement and exclusion through a
-\textbf{non-linear coupling logic}.  We organize the mechanism into
-two interacting tracks, whose formulas are introduced in context
-below and summarized in Eqs.~\ref{eq:tau}--\ref{eq:final}.
-
-Importantly, this dual-track scoring requires \textbf{no parameter
-updates} to the base retriever $f(\cdot)$: all operations occur at
-the scoring layer, making \method{} a 100\% training-free inference
-engine.
-
-\subsubsection{The Penalty Track: Adaptive Exclusion Boundary}
-
-The primary challenge in exclusion-aware retrieval is distinguishing
-between genuine constraint violation and incidental topical overlap.
-The penalty track reshapes the decision surface around the exclusion
-signal through three coordinated components.
-
-\textbf{Semantic Noise Floor ($\tau$).}
-Recall that $\mathbf{h}_{\text{base}}$ encodes the full background
-context while $\mathbf{h}_{\text{neg}}$ encodes the pure exclusion
-signal.  A fixed penalty threshold fails because the
-\textbf{topological overlap} between these two vectors varies
-dramatically across queries.  We define a \textbf{dynamic semantic
-threshold} that measures precisely this overlap:
+Given the three query encodings, we compute document-level cosine
+similarities
 %
 \begin{equation}
-  \tau = \cos(\mathbf{h}_{\text{base}}, \mathbf{h}_{\text{neg}}) + \delta.
-  \label{eq:tau}
+  \sbase(d) = \cos(\mathbf{h}_{\text{base}}, \mathbf{v}_d),\quad
+  \spos(d) = \cos(\mathbf{h}_{\text{pos}}, \mathbf{v}_d),\quad
+  \sneg(d) = \cos(\mathbf{h}_{\text{neg}}, \mathbf{v}_d).
+  \label{eq:channel-scores}
 \end{equation}
 %
-When the two directions are nearly orthogonal (e.g., ``ISO
-standards,'' ``exclude IEEE''), $\tau \ll 0$ and the penalty deploys
-aggressively, filtering trap documents with confidence.  When they are
-semantically entangled (e.g., ``Hubble achievements,'' ``exclude
-repair-only articles''), $\tau$ rises toward $1.0$, automatically
-raising the penalty trigger bar and protecting documents that merely
-share vocabulary with the exclusion.  This dynamic anchoring is
-precisely why preserving $\mathbf{h}_{\text{base}}$ as an independent
-channel is essential: without it, we cannot measure the topological
-overlap that determines whether an exclusion should trigger aggressive
-or conservative filtering.  The offset $\delta$ is set to $0.0$ under
-the Zero-Bias Criterion (\S\ref{sec:delta-derivation}).
+The base and positive channels provide topical relevance and
+instructional refinement.  The negative channel is more delicate: a
+high $\sneg(d)$ can indicate a true constraint violation, but it can
+also arise because relevant and excluded documents share entities,
+topic, or background context.  \method{} therefore performs
+decision-layer reranking through a query-conditioned residual score,
+rather than treating the raw negative-channel score as direct evidence
+for exclusion.
 
-\textbf{Relative Saliency Gating ($\text{gap}_w$).}
-A document should only be penalized when its exclusion signal
-\emph{dominates} its base relevance --- i.e., the document is
-genuinely more about ``what to exclude'' than ``what to retrieve.''
-We formalize this through a saliency gate:
+\subsubsection{Background Leakage Estimation}
+
+Our treatment follows the same calibration principle as local scaling
+methods for nearest-neighbor retrieval.  For example, CSLS calibrates
+raw cosine similarity by subtracting neighborhood-density terms, thereby
+reducing the bias caused by hubs in high-dimensional embedding spaces
+\cite{conneau2018wordtranslation}.  In our setting, the analogous bias
+is not neighborhood density but background-induced similarity in the
+negative channel.  For each query, we therefore estimate the part of the
+negative-channel score that is expected from background relevance.  Let
+$\mu_b,\sigma_b$ be the mean and standard deviation of
+$\sbase$ over the candidate set, and let $\mu_n,\sigma_n$ be the
+corresponding statistics for $\sneg$.  We first standardize the base
+score,
 %
 \begin{equation}
-  \text{gap}_w = \sigma\big((\sneg - \sbase) \cdot T_{\text{gap}}\big).
-  \label{eq:gap}
+  z_{\text{base}}(d) =
+    \frac{\sbase(d) - \mu_b}{\sigma_b},
+  \label{eq:base-zscore}
 \end{equation}
 %
-When $\sneg > \sbase$, the gate opens ($\text{gap}_w \to 1$) and the
-penalty activates.  When $\sbase$ dominates ($\sbase \gg \sneg$), the
-gate closes ($\text{gap}_w \to 0$), protecting topically relevant
-documents from collateral damage.  This \textbf{context-aware} design
-preserves topical integrity: a document that is strongly relevant on
-the base channel is shielded from the exclusion mechanism, even if it
-happens to have a modest exclusion score.
-
-\textbf{Smooth Barrier (Softplus with Saturation).}
-We apply the penalty through a Softplus-transformed barrier, capped
-by a saturation factor $\rho$:
+and measure the query-level overlap between the base and exclusion
+channels as
 %
 \begin{equation}
-  \text{penalty} = \min\!\big(\alpha \cdot \text{Softplus}(\sneg - \tau)
-    \cdot \text{gap}_w,\; \sbase \cdot \rho\big).
-  \label{eq:penalty}
+  c_q = \cos(\mathbf{h}_{\text{base}}, \mathbf{h}_{\text{neg}}).
+  \label{eq:query-overlap}
 \end{equation}
 %
-The Softplus transformation (rather than a hard ReLU cutoff) creates a
-\textbf{continuous penalty landscape} that prevents abrupt
-rank-swapping anomalies in the retrieval manifold.  The saturation cap
-$\rho = 0.5$ prevents the \textbf{over-killing effect}: a single
-exclusion term should not be able to zero out a document's total
-relevance.  The penalty scale $\alpha$ is derived from first
-principles in \S\ref{sec:parameter-derivation}.
-
-\subsubsection{The Reward Track: Conditional Enhancement}
-
-A naive addition of an enhancement score $\spos$ leads to
-\textbf{reward leakage}: trap documents that match the topic but
-violate the instruction still receive a boost, defeating the purpose
-of exclusion.  We resolve this through conditional gating.
-
-\textbf{Safety Gate.}
-We implement a non-linear gate that monitors the penalty track and
-suppresses the reward channel when a document enters the exclusion
-zone:
+The expected negative-channel score induced by background relevance is
+then
 %
 \begin{equation}
-  \text{safety} = 1 - \sigma\big((\sneg - \tau) \cdot T_{\text{safety}}\big).
+  \widehat{S}^{\text{bg}}_{\text{neg}}(d)
+    = \mu_n + \sigma_n\, c_q\, z_{\text{base}}(d).
+  \label{eq:bg-estimate}
+\end{equation}
+%
+This estimate transfers the standardized base-channel variation into
+the negative-channel scale, modulated by the semantic overlap between
+the base and exclusion queries.  It provides a query-conditioned
+baseline for what the negative score would be if a document matched
+only the background context.
+
+\subsubsection{Residual Exclusion Penalty}
+
+We define the residual negative score as the excess negative-channel
+evidence beyond the background estimate:
+%
+\begin{equation}
+  R_{\text{neg}}(d)
+    = \sneg(d) - \widehat{S}^{\text{bg}}_{\text{neg}}(d).
+  \label{eq:residual}
+\end{equation}
+%
+Positive residuals indicate that the document matches the exclusion
+query more strongly than expected from background relevance alone.  To
+avoid relying on a fixed threshold across queries, we use the median
+absolute deviation as a robust scale estimate:
+%
+\begin{equation}
+  m_q = \lambda \cdot
+  \operatorname{MAD}\!\left(\{R_{\text{neg}}(d): d \in \mathcal{C}_q\}\right),
+  \label{eq:mad-margin}
+\end{equation}
+%
+where $\mathcal{C}_q$ denotes the retrieved candidate set.  The
+penalty is applied only to residual evidence above this query-specific
+margin:
+%
+\begin{equation}
+  \text{penalty}(d)
+    = \alpha_q\,\operatorname{Softplus}\!\left(R_{\text{neg}}(d)-m_q\right).
+  \label{eq:residual-penalty}
+\end{equation}
+%
+The Softplus transformation gives a smooth penalty around the margin,
+while the residual construction prevents the negative channel from
+penalizing documents merely because they share topical background with
+the exclusion query.  The scale $\alpha_q$ is derived by score
+calibration in \S\ref{sec:parameter-derivation}.
+
+\subsubsection{Residual-Normalized Safety Gate}
+
+The positive channel can improve recall for documents satisfying the
+instruction, but a raw positive reward can also amplify documents that
+violate the exclusion constraint.  We therefore gate the positive
+reward by the normalized residual negative score:
+%
+\begin{equation}
+  \text{safety}(d)
+    = 1 - \sigma\!\left(
+      \kappa \frac{R_{\text{neg}}(d)}
+      {\operatorname{MAD}\!\left(\{R_{\text{neg}}(d'): d' \in \mathcal{C}_q\}\right)}
+    \right).
   \label{eq:safety}
 \end{equation}
 %
-The gate is near-binary ($T_{\text{safety}} = 20$): for documents
-safely below threshold ($\sneg \ll \tau$), $\text{safety} \approx 1$
-and the full reward applies; for documents that trigger the exclusion
-zone ($\sneg \gg \tau$), $\text{safety} \approx 0$ and the reward is
-\textbf{completely cut off}.
+The gate compares each document's residual against the query-specific
+residual scale.  Documents with large positive residuals receive less
+positive-channel reward, while documents whose negative score is
+consistent with background relevance remain eligible for enhancement.
+The sharpness parameter $\kappa$ controls the transition between these
+regimes.
 
-\textbf{Coupled Synthesis.}
-The final score is produced by coupling the two tracks:
+\textbf{Final score.}
+The final decision-layer score combines base relevance, safety-gated
+positive refinement, and residual exclusion penalty:
 %
 \begin{equation}
-  \sfinal = \sbase + \beta \cdot \spos \cdot \text{safety} - \text{penalty}.
+  \sfinal(d)
+    = \sbase(d)
+    + \beta_q\,\spos(d)\,\text{safety}(d)
+    - \alpha_q\,\operatorname{Softplus}\!\left(R_{\text{neg}}(d)-m_q\right).
   \label{eq:final}
 \end{equation}
 %
-This configuration implements a \textbf{Logical-NOT} operation within
-the embedding space: reward is conditionally granted only if the
-document resides in the ``safe'' zone.  The non-linear synergy between
-Eqs.~\ref{eq:safety} and \ref{eq:final} cannot be replicated by linear
-vector-space operations ($Q_{\text{base}} - Q_{\text{neg}}$), which
-inevitably distort the positive intent when moving away from the
-negation direction.  The enhancement scale $\beta$ is derived in
-\S\ref{sec:parameter-derivation}.
-
-\textbf{Complete Formula.}
-Substituting Eqs.~\ref{eq:tau}--\ref{eq:safety} into
-Eq.~\ref{eq:final}, the full scoring function of \method{} is:
-%
-\begin{equation}
-  \boxed{
-  \sfinal = \sbase + \beta\,\spos\cdot\text{safety} - \min\!\big(\alpha\,\text{Softplus}(\sneg-\tau)\cdot\text{gap}_w,\; \sbase\cdot\rho\big)
-  }
-  \label{eq:complete}
-\end{equation}
-%
-where $\tau = \cos(\mathbf{h}_{\text{base}}, \mathbf{h}_{\text{neg}}) + \delta$,
-$T_{\text{safety}} = 20$, $T_{\text{gap}} = 10$, $\rho = 0.5$,
-and the three learnable-free parameters $\alpha$, $\beta$, $\delta$
-are derived from first principles in
-\S\ref{sec:parameter-derivation}.
+This nonlinear score composition implements conditional suppression at
+ranking time without modifying the dense retriever.  The parameters
+$\alpha_q$ and $\beta_q$ are derived from the score distributions of
+the current query, while $\lambda$ and $\kappa$ control the residual
+margin and gate sharpness.  In implementation, $\alpha$ and $\beta$
+also have bounded fallback values for degenerate candidate sets.
 
 \begin{figure}[t]
   \centering
@@ -544,241 +547,161 @@ are derived from first principles in
     \small (placeholder: to be replaced with pipeline diagram)\vspace{1cm}}}
   \caption{Overview of \method{}.  A query and its instruction are
     decomposed by an LLM into three queries ($\qbase$, $\qpos$,
-    $\qminus$), independently encoded, and scored via the nonlinear
-    decision mechanism in Eq. \ref{eq:final}.  The Safety Gate
-    (Eq. \ref{eq:safety}) conditionally suppresses the enhancement
-    signal when a document triggers the exclusion threshold $\tau$,
-    enabling what linear vector operations cannot: selective,
-    conditional suppression that penalizes trap documents while
-    preserving relevant document rankings.}
+    $\qminus$), independently encoded, and scored via the
+    decision-layer mechanism in Eq. \ref{eq:final}.  The scorer first
+    estimates background leakage in the negative channel, extracts a
+    residual exclusion signal, and then applies a residual penalty
+    together with a safety-gated positive reward.  This allows
+    conditional suppression of documents whose negative residual exceeds
+    the background estimate while preserving rankings for documents
+    supported by the base and positive channels.}
   \label{fig:pipeline}
 \end{figure}
 
 % ============================================================
-% 4. FIRST-PRINCIPLES PARAMETER DERIVATION
+% 4. INFERENCE-TIME SCORE CALIBRATION
 % ============================================================
-\section{Scale Alignment: From Empirical Search to Statistical Calibration}
+\section{Inference-Time Score Calibration}
 \label{sec:parameter-derivation}
 
-The scoring formula in Eq.~\ref{eq:final} contains three parameters:
-$\alpha$ (penalty magnitude), $\beta$ (enhancement magnitude), and
-$\delta$ (threshold offset).  Rather than grid-searching these on the
-test set --- which risks overfitting and provides no insight into why a
-particular value is optimal --- we derive them from the intrinsic
-statistical properties of the score distributions.  The core
-contribution of this section is a principled calibration framework that
-transforms parameter selection from an empirical search into a
-statistical derivation.
+The scoring formula in Eq.~\ref{eq:final} contains two query-level
+calibration factors: $\alpha_q$ for the residual exclusion penalty and
+$\beta_q$ for the positive refinement reward.  Rather than
+grid-searching these values on labeled queries, we derive them at
+reranking time from the score distributions of the current candidate
+set.  This converts parameter selection into query-conditioned score
+calibration: the correction terms are placed on a magnitude comparable
+to the base retriever without changing the retriever or using relevance
+labels.
 
-\subsection{The Symmetry of Reward and Penalty ($\alpha$ and $\beta$)}
+\subsection{Candidate-Set Score Calibration}
 \label{sec:scale-alignment}
 
-To ensure the instruction-following mechanism is both effective and
-robust across different encoders, we move beyond empirical tuning and
-propose the \textbf{Scale Alignment Principle (SAP)}: the
-``instructional energy'' (either positive or negative) should be
-commensurate with the ``topic energy'' (the base retrieval score)
-within the embedding space.  We define
-$E_{\text{base}}(d) \equiv S_{\text{base}}(d)$ as the document's
-\textbf{signal intensity} on the base channel, and analogously
-$E_{\text{req}}(d)$ and $E_{\text{neg}}(d)$ for the refinement and
-exclusion channels.  SAP treats $\alpha$ and $\beta$ as scaling
-factors that translate heterogeneous instructional signals into a
-common probabilistic scale, ensuring \textbf{magnitude symmetry}
-between the base retriever and our dual-track modifications.
+The base, positive, and negative channels are produced by the same dense
+retriever but have different score distributions because they encode
+different query intents.  We therefore treat $\alpha_q$ and $\beta_q$ as
+post-hoc scale factors for decision-layer reranking.  This follows the
+standard calibration perspective that model outputs can be transformed
+after training while the model parameters remain fixed, as in Platt
+scaling and temperature scaling
+\cite{platt1999probabilistic,guo2017temperature}.  Temperature scaling,
+for example, optimizes a single scalar on a labeled validation set and
+does not change the predicted class.  Our setting differs in two ways:
+we calibrate ranking scores rather than class probabilities, and the
+calibration is label-free.  The only inputs are the channel scores over
+the current candidate set $\mathcal{C}_q$.
 
-This calibration philosophy has strong precedents.  In classification,
-temperature scaling \cite{guo2017temperature} and Platt scaling
-\cite{platt1999probabilistic} derive a single post-hoc parameter from
-the statistics of logit distributions, without retraining the model.
-In information retrieval, the Divergence from Randomness framework
-\cite{amati2002dfr} derives scoring functions from first principles of
-probability theory rather than empirical tuning.  SAP extends this
-tradition to instruction-following retrieval: instead of calibrating
-confidence estimates, we calibrate the relative magnitude of
-instructional correction signals against the base retriever's scores,
-transforming three heterogeneous similarity scores into a
-well-calibrated ranking signal.
-
-\subsubsection{Penalty Calibration ($\alpha$): Neutralizing Topical Bias}
-
-We define ``at-risk'' documents as those where
-$S_{\text{neg}} > \tau$ (i.e., documents that match the exclusion
-constraint).  For these documents, the penalty must be sufficient to
-\textbf{neutralize the existing topical momentum} --- the force to
-exclude should equal the force that originally retrieved the document.
-Applying SAP to the penalty channel yields:
+Let the residual excess over the margin be
 %
 \begin{equation}
-  \alpha_{\text{SAP}} =
-    \frac{\mathbb{E}[S_{\text{base}} \mid \text{at-risk}]}
-         {\mathbb{E}[\text{Softplus}(S_{\text{neg}} - \tau) \mid
-         \text{at-risk}]}.
+  o_q(d) = R_{\text{neg}}(d) - m_q,
+  \label{eq:residual-excess}
+\end{equation}
+%
+and define the residual-exceeding subset as
+%
+\begin{equation}
+  \mathcal{A}_q =
+  \{d \in \mathcal{C}_q : o_q(d) > 0\}.
+  \label{eq:exceeding-set}
+\end{equation}
+%
+These are the documents whose negative residual exceeds the robust
+margin and therefore carries residual exclusion evidence.  The penalty
+coefficient is chosen so that the average residual penalty on
+$\mathcal{A}_q$ matches the average base score on the same subset:
+%
+\begin{equation}
+  \alpha_q =
+    \frac{
+      \frac{1}{|\mathcal{A}_q|}\sum_{d\in\mathcal{A}_q}\sbase(d)
+    }{
+      \frac{1}{|\mathcal{A}_q|}\sum_{d\in\mathcal{A}_q}
+      \operatorname{Softplus}(o_q(d))
+    }.
   \label{eq:alpha}
 \end{equation}
 %
-Eq.~\ref{eq:alpha} requires no hyper-parameter search, no reward
-function, and no heuristic assumptions --- it simply calibrates the
-penalty to match the base signal.
-
-To verify that $\alpha_{\text{SAP}}$ is not an artifact of a single
-derivation strategy, we evaluated \textbf{30 independent derivation
-methods} spanning six theoretical families
-(Table~\ref{tab:alpha-derivation}; full list in Appendix
-\ref{sec:alpha-appendix}):
-%
-\begin{itemize}
-  \item \textbf{Group A (Primary: Scale Alignment)}: expectation ratio and
-    percentile-matching methods.  $\alpha = 1.000$--$1.030$.
-  \item \textbf{Groups B--E (Robustness Checks)}: score resolution
-    statistics, distribution separation (KL divergence), ranking-margin
-    analysis, and physics-informed half-life models.  These produce lower
-    $\alpha$ values ($0.05$--$0.50$) that are overly conservative.
-  \item \textbf{Group F (Boundary Exploration)}: entropy-based resolution,
-    kurtosis scaling, and Bayesian posterior estimates.  These yield
-    $\alpha$ values up to $6.15$ --- mathematically valid but practically
-    too aggressive, violating a \emph{Minimal Intervention} principle.
-\end{itemize}
-%
-Across all 30 strategies, the median $\alpha = 0.92$ with $\sigma =
-0.15$, and Group~A methods exhibit a \textbf{surprising consensus}
-around $\alpha \approx 1.0$ under the standard setting ($\delta =
-0.0$).  This cross-method agreement suggests that $\alpha = 1.0$ is
-not merely an empirical hyper-parameter, but a \textbf{fundamental
-scaling constant} that maintains magnitude symmetry between semantic
-relevance and instructional exclusion in dense embedding spaces.
-
-\subsubsection{Enhancement Calibration ($\beta$): The Information Premium}
-
-For ``safe'' documents ($S_{\text{neg}} \leq \tau$), the enhancement
-magnitude should match the base score magnitude.  Applying SAP to the
-reward channel yields:
+For the positive channel, we use the complementary safe subset
 %
 \begin{equation}
-  \beta = \frac{\mathbb{E}[S_{\text{base}} \mid \text{safe}]}
-    {\mathbb{E}[S_{\text{req}} \cdot \text{safety} \mid \text{safe}]}.
+  \mathcal{B}_q =
+  \{d \in \mathcal{C}_q : o_q(d) \leq 0\}.
+  \label{eq:safe-set}
+\end{equation}
+%
+The reward coefficient is derived after applying the safety gate, since
+the positive reward should be reduced when a document has residual
+negative evidence.  We align the average gated reward in
+$\mathcal{B}_q$ with the strongest base score in the same subset:
+%
+\begin{equation}
+  \beta_q =
+    \frac{
+      \max_{d\in\mathcal{B}_q}\sbase(d)
+    }{
+      \frac{1}{|\mathcal{B}_q|}\sum_{d\in\mathcal{B}_q}
+      \spos(d)\,\text{safety}(d)
+    }.
   \label{eq:beta}
 \end{equation}
 %
-From training-set statistics (855 queries, 878 positives, 12,825
-negatives), this yields $\beta = 1.926$.  The fact that $\beta > 1$
-reveals a fundamental \textbf{Information Asymmetry}: while $\alpha$
-merely \emph{neutralizes} existing topical bias (working against the
-base score), $\beta$ must \emph{inject} new semantic information from
-$\qpos$ that is not present in $\qbase$.  This \textbf{Information
-Premium} --- the extra multiplier beyond $1.0$ --- quantifies the
-cost of ``promoting'' documents that satisfy specific instructional
-constraints above the generic topical background.  In other words,
-$\alpha$ is a damping factor while $\beta$ is an amplification factor,
-and their asymmetry ($\beta > 1$ vs.\ $\alpha \approx 1$) reflects
-the different nature of the two instructional channels.
+This calibration places the gated reward on the same score scale as the
+base evidence among documents that do not exceed the residual margin.
+In implementation, empty subsets or near-zero denominators use bounded
+fallback values, and both coefficients are clipped to a fixed range for
+numerical stability.  These fallbacks are not selected from relevance
+labels and are used only for degenerate candidate sets.
 
-\begin{table}[t]
-\centering
-\scriptsize
-\begin{tabular}{lcccc}
-\toprule
-\textbf{Group} & \textbf{Method} & $\alpha$ & \textbf{Intuition} & \textbf{Status} \\
-\midrule
-A & Scale Alignment & 1.000 & Expectation ratio & \textbf{Optimal} \\
-A & Percentile-50 & 1.000 & Median alignment & Consistent \\
-A & Percentile-75 & 1.030 & 75th-percentile alignment & Near-optimal \\
-B & Score Variance & 0.052 & Encoder resolution & Too low \\
-C & KL Minimization & 0.120 & Distribution match & Too low \\
-D & NDCG Margin & 0.310 & Ranking margin & Suboptimal \\
-E & Half-Life & 0.500 & 50\% decay & Conservative \\
-F & Score Entropy & 6.150 & Shannon resolution & Too high \\
-\bottomrule
-\end{tabular}
-	\caption{$\alpha$ derivation across 30 candidate strategies
-	(representative subset shown; full list in Appendix
-	\ref{sec:alpha-appendix}).  Group~A methods exhibit a striking
-	consensus around $\alpha \approx 1.0$.  Groups B--E are
-	conservative (under-penalize), while Group~F explores boundary
-	cases that violate the Minimal Intervention principle.}
-\label{tab:alpha-derivation}
-\end{table}
+\subsection{Residual Margin and Gate Scale}
+\label{sec:residual-calibration}
 
-\subsection{The Zero-Bias Threshold ($\delta$)}
-\label{sec:delta-derivation}
-
-Rather than treating $\delta$ as a free parameter, we derive it from
-the intrinsic noise characteristic of the exclusion channel.  We
-define:
+The residual formulation replaces a fixed exclusion threshold with two
+query-conditioned quantities: the robust residual margin $m_q$ and the
+safety-gate scale.  The margin is derived from the dispersion of the
+residual negative scores:
 %
 \begin{equation}
-  \delta = k \cdot \sigma_{\text{neg}},
-  \label{eq:delta}
+  m_q = \lambda \cdot
+  \operatorname{MAD}\!\left(\{R_{\text{neg}}(d): d \in \mathcal{C}_q\}\right),
+  \label{eq:residual-margin-scale}
 \end{equation}
 %
-where $\sigma_{\text{neg}} = \text{Std}(S_{\text{neg}})$ is the
-standard deviation of the exclusion scores across the training corpus
---- measuring the channel's random fluctuation amplitude --- and $k$
-is a confidence multiplier.
+where the median absolute deviation provides a robust scale estimate
+for the current candidate set.  This choice makes the exclusion
+boundary depend on residual evidence rather than raw negative-channel
+score magnitude.
 
-This formulation admits two principled choices for $k$, grounded in
-distinct statistical criteria:
+The safety gate uses the same residual scale:
 %
-\begin{itemize}
-  \item \textbf{$k = 0.0$ (Neyman--Pearson threshold)}: the dynamic
-    anchor $\tau = \cos(\mathbf{h}_{\text{base}}, \mathbf{h}_{\text{neg}})$
-    already captures the per-query semantic noise floor.  Adding zero
-    noise margin maximizes the at-risk population and hence instruction
-    sensitivity.  This is our primary setting.
-  \item \textbf{$k = 2.0$ (95\% confidence margin)}: adds two standard
-    deviations of the exclusion score as a noise buffer.  While
-    statistically conservative, this raises the penalty trigger bar
-    and shrinks the at-risk population, reducing p-MRR.
-\end{itemize}
+\begin{equation}
+  \text{safety}(d) =
+  1-\sigma\!\left(\kappa\frac{R_{\text{neg}}(d)}
+  {\operatorname{MAD}(\{R_{\text{neg}}(d'):d'\in\mathcal{C}_q\})}\right).
+  \label{eq:residual-gate-scale}
+\end{equation}
 %
-From training-set statistics, $\sigma_{\text{neg}} = 0.087$, yielding
-$\delta = 0.0$ under the Neyman--Pearson criterion ($k = 0.0$).  The
-fact that $\delta$ is \emph{computed} from Eq.~\ref{eq:delta} rather
-than asserted distinguishes our approach from heuristic threshold
-tuning.
+Thus, the same residual statistic determines which documents are
+penalized and how much positive reward they receive.  The constants
+$\lambda$ and $\kappa$ are fixed across queries, while $\alpha_q$ and
+$\beta_q$ are derived from per-query score statistics.
 
-More fundamentally, \textbf{any $\delta \neq 0$ would break the SAP
-equilibrium}.  Since $\alpha$ and $\beta$ are calibrated under the
-$\delta = 0.0$ baseline (Eq.~\ref{eq:delta} with $k = 0.0$),
-introducing a non-zero offset shifts the at-risk population and
-unbalances the symmetry between penalty magnitude and base score
-magnitude established by Eq.~\ref{eq:alpha}.  Empirically, $k > 0$
-restricts the at-risk population and reduces p-MRR, confirming that
-the \textbf{dynamic anchor $\tau$ alone} provides optimal
-discriminative power.
-
-\subsection{Training-Set vs.\ Test-Set Derivation}
+\subsection{Label-Free Inference-Time Derivation}
 \label{sec:train-vs-test}
 
-A critical concern in parameter derivation is \textbf{test-set leakage}:
-if parameters are tuned on the test set, performance numbers are
-over-optimistic and non-reproducible.  We address this by deriving all
-parameters from training-set statistics alone:
+A critical concern in inference-time calibration is test-set leakage:
+parameters must not be selected using relevance labels, evaluation
+metrics, or benchmark-level grid search.  Our derivation avoids this
+leakage because $\alpha_q$ and $\beta_q$ are computed only from the
+unlabeled channel scores in $\mathcal{C}_q$.  The retrieval labels are
+never used when computing Eqs.~\ref{eq:alpha}--\ref{eq:beta}.
 %
-\begin{itemize}
-  \item \textbf{V5 (training-set derivation)}:
-    $\alpha = 1.0, \beta = 1.926, \delta = 0.0$
-    $\rightarrow$ p-MRR = 0.2360 on FollowIR test set.
-  \item \textbf{V4 (test-set derivation, for comparison)}:
-    $\alpha = 1.0, \beta = 1.29, \delta = 0.0$
-    $\rightarrow$ p-MRR = 0.2243 on FollowIR test set.
-\end{itemize}
-%
-Both training-set and test-set derivations independently yield
-$\alpha \approx 1.0$, validating SAP as a genuine statistical
-regularity of the embedding space rather than an artifact of
-overfitting.  The slight difference in $\beta$ (1.926 vs.\ 1.29) is
-expected: the training set captures a broader range of semantic
-variation, demanding a higher Information Premium to cover the full
-space of instructional constraints.  Notably, V5's higher p-MRR
-(0.2360 vs.\ 0.2243) demonstrates that training-set derivation can
-actually \emph{outperform} test-set grid search --- eliminating
-overfitting risk while achieving better results.
-
-This encoder-agnostic approach ensures that \method{} can be applied
-to any dense retriever without manual recalibration: the parameters
-are computed from the retriever's own score distributions, not from
-external benchmarks.
+The remaining constants $\lambda$ and $\kappa$ define the residual
+margin and gate sharpness.  They are fixed across queries and analyzed
+separately in ablation and sensitivity studies.  This separation keeps
+the method portable across dense retrievers: query-level calibration
+adapts to the score scale of the current retriever, while global
+sensitivity constants are not re-selected for individual test queries.
 % ============================================================
 % 5. EXPERIMENTS
 % ============================================================
@@ -833,7 +756,7 @@ achieves the best overall score but requires supervised training.
 \subsection{Main Results: FollowIR Benchmark}
 \label{sec:main-results}
 
-Table~\ref{tab:followir-main} compares \method{} with six query
+Table~\ref{tab:followir-main} compares \method{} with ten query
 rewriting baselines on the FollowIR benchmark.  \method{} achieves
 the highest mean p-MRR (14.9) and Score (29.0), outperforming
 all baselines by 10.6$\times$ in p-MRR (vs.\ HyDE) and 50.6$\times$
@@ -854,11 +777,16 @@ HyDE & 23.6 & +6.5 & 24.9 & -2.9 & 21.4 & +0.7 & 23.4 & +1.4 & Hypo.\ docs \\
 Query2Doc & 25.9 & +8.0 & 27.9 & -7.5 & 24.9 & -3.8 & 26.2 & -1.1 & Pseudo-doc \\
 RAG-Fusion & 21.9 & +5.4 & 21.1 & -8.1 & 21.0 & +1.8 & 21.3 & -0.3 & Multi-query \\
 RAG-QR & 22.3 & +2.3 & 27.6 & -10.3 & 22.9 & -2.1 & 24.3 & -3.4 & T5 rewriter \\
+ConvSearch-R1 & 22.3 & +3.0 & 25.9 & -2.5 & 22.0 & +0.2 & 23.4 & +0.2 & RL rewriter \\
+INF-X Full & 27.0 & +7.2 & 32.1 & -1.4 & 22.3 & +4.4 & 27.0 & +3.4 & RL rewrite + ret. \\
+BGE-Reasoner-Rewriter & 21.5 & +0.7 & -- & -- & 20.5 & +3.4 & -- & -- & 5-query fusion \\
+ReFeed-8B & 18.3 & -6.6 & 23.3 & -1.2 & 22.4 & -0.4 & 21.2 & -2.7 & CoT refine \\
+TongSearch-QR & 21.7 & +3.3 & 24.5 & -4.6 & 22.6 & +0.2 & 22.7 & -0.4 & Conversational QR \\
 \midrule
 DeIR-Dual & \textbf{26.0} & \textbf{+17.6} & \textbf{28.6} & \textbf{+8.3} & \textbf{32.3} & \textbf{+18.7} & \textbf{29.0} & \textbf{+14.9} & Dual-track \\
 \bottomrule
 \end{tabular}
-\caption{Comparison of \method{} with six query rewriting methods
+\caption{Comparison of \method{} with ten query rewriting methods
   on the FollowIR benchmark.  \method{} achieves the highest mean
   p-MRR (14.9) and Score (29.0), outperforming all baselines
   by 10.6$\times$ in p-MRR (vs.\ HyDE) and 50.6$\times$ (vs.\
@@ -883,8 +811,9 @@ DeIR-Dual & \textbf{26.0} & \textbf{+17.6} & \textbf{28.6} & \textbf{+8.3} & \te
 \subsection{Ablation Study}
 \label{sec:ablation}
 
-\todo{Ablate each V2 component: dynamic $\tau$, safety gate,
-  gap weighting, Softplus penalty, $\qminus$ contribution.}
+\todo{Ablate the final residual-scoring components: positive refinement,
+  negative residual branch, safety-gated reward, linear fusion, and
+  background-leakage subtraction in the appendix.}
 
 \subsection{Encoder-Agnostic Analysis}
 \label{sec:encoder-agnostic}

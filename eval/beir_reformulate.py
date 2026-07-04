@@ -187,6 +187,7 @@ for temp in [0.1]:
 class Qwen3Reformulator:
     def __init__(self, model_path, device="cuda", max_new_tokens=512):
         self.max_new_tokens = max_new_tokens
+        self.batch_size = 16
         logger.info(f"Loading Qwen3-4B from {model_path}...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 
@@ -233,6 +234,46 @@ class Qwen3Reformulator:
         result_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
         return self._parse_result(result_text, query)
 
+    def reformulate_batch(self, queries, system_prompt, user_template, temperature):
+        """Process multiple queries in a single forward pass for speed."""
+        if not queries:
+            return []
+        # Build prompts
+        texts = []
+        for query in queries:
+            user_prompt = user_template.format(query=query)
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+            text = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+            )
+            texts.append(text)
+
+        # Tokenize with left padding for batch generation
+        self.tokenizer.padding_side = "left"
+        inputs = self.tokenizer(texts, return_tensors="pt", padding=True, truncation=True, max_length=2048).to(self.model.device)
+
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                temperature=temperature,
+                do_sample=temperature > 0,
+                top_p=0.9,
+                pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+            )
+
+        # Decode each output, stripping the prompt tokens
+        input_len = inputs["input_ids"].shape[1]
+        results = []
+        for i, (query, output) in enumerate(zip(queries, outputs)):
+            generated_ids = output[input_len:]
+            result_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+            results.append(self._parse_result(result_text, query))
+        return results
+
     def _parse_result(self, result_text, original_query):
         try:
             json_start = result_text.find('{')
@@ -277,13 +318,13 @@ def load_beir_queries(dataset_name: str) -> Dict[str, str]:
     return queries
 
 
-def run_variant(reformulator, variant_id, variant_config, queries, output_dir, dataset_name):
+def run_variant(reformulator, variant_id, variant_config, queries, output_dir, dataset_name, output_suffix=""):
     system_prompt = variant_config['system_prompt']
     user_template = variant_config['user_template']
     temperature = variant_config['temperature']
 
     os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f"{dataset_name}_{variant_id}.jsonl")
+    output_path = os.path.join(output_dir, f"{dataset_name}{output_suffix}_{variant_id}.jsonl")
 
     existing = {}
     if os.path.exists(output_path):
@@ -299,19 +340,41 @@ def run_variant(reformulator, variant_id, variant_config, queries, output_dir, d
     failed = 0
     skipped = 0
 
-    for i, (qid, query_text) in enumerate(tqdm(queries.items(), desc=f"Reformulating {dataset_name}")):
+    # Separate existing from queries needing generation
+    pending = []  # list of (qid, query_text)
+    for qid, query_text in queries.items():
         if not query_text:
             continue
-
         if qid in existing:
             results.append(existing[qid])
             skipped += 1
-            continue
+        else:
+            pending.append((qid, query_text))
+
+    logger.info(f"[{variant_id}] {skipped} skipped (existing), {len(pending)} to generate")
+
+    # Process in batches
+    batch_size = reformulator.batch_size
+    total = len(pending)
+    for batch_start in range(0, total, batch_size):
+        batch = pending[batch_start:batch_start + batch_size]
+        batch_queries = [q[1] for q in batch]
 
         try:
-            q_plus, q_minus = reformulator.reformulate(
-                query_text, system_prompt, user_template, temperature
+            batch_results = reformulator.reformulate_batch(
+                batch_queries, system_prompt, user_template, temperature
             )
+        except Exception as e:
+            logger.warning(f"[{variant_id}] Batch failed at {batch_start}: {e}, falling back to sequential")
+            batch_results = []
+            for q in batch_queries:
+                try:
+                    batch_results.append(reformulator.reformulate(q, system_prompt, user_template, temperature))
+                except Exception as e2:
+                    failed += 1
+                    batch_results.append((q, "[NONE]"))
+
+        for (qid, query_text), (q_plus, q_minus) in zip(batch, batch_results):
             result = {
                 "task_name": dataset_name,
                 "qid": qid,
@@ -323,36 +386,22 @@ def run_variant(reformulator, variant_id, variant_config, queries, output_dir, d
                 "reformulator": f"Qwen3-4B-{variant_id}",
                 "created_at": datetime.now().isoformat()
             }
-        except Exception as e:
-            failed += 1
-            result = {
-                "task_name": dataset_name,
-                "qid": qid,
-                "query": query_text,
-                "instruction": "",
-                "prompt_version": variant_id,
-                "q_plus": query_text,
-                "q_minus": "[NONE]",
-                "reformulator": f"Qwen3-4B-{variant_id}",
-                "error": str(e),
-                "created_at": datetime.now().isoformat()
-            }
+            results.append(result)
 
-        results.append(result)
-
-        if (i + 1) % 50 == 0 or (i + 1) == len(queries):
+        i = skipped + batch_start + len(batch)
+        if (i) % 50 == 0 or i == len(queries) or batch_start + batch_size >= total:
             with open(output_path, 'w') as f:
                 for r in results:
                     f.write(json.dumps(r, ensure_ascii=False) + '\n')
 
             elapsed = time.time() - start_time
-            new_processed = (i + 1) - skipped
+            new_processed = (batch_start + len(batch))
             if new_processed > 0 and elapsed > 0:
                 speed = new_processed / elapsed
-                remaining = len(queries) - (i + 1)
+                remaining = total - new_processed
                 eta = remaining / speed if speed > 0 else 0
                 logger.info(
-                    f"[{variant_id}] {i+1}/{len(queries)} "
+                    f"[{variant_id}] {i}/{len(queries)} "
                     f"(new: {new_processed}, skipped: {skipped}, failed: {failed}), "
                     f"speed: {speed:.1f} q/s, ETA: {eta:.0f}s"
                 )
@@ -379,7 +428,15 @@ def main():
     parser.add_argument("--max_queries", type=int, default=0,
                         help="Max queries to process (0 = all)")
     parser.add_argument("--filter_qrels", action="store_true",
-                        help="Only process queries that appear in qrels test split")
+                        help="Only process queries that appear in qrels split")
+    parser.add_argument("--qrels_split", type=str, default="test",
+                        help="qrels split for filtering (test/validation/train)")
+    parser.add_argument("--output_suffix", type=str, default="",
+                        help="Suffix appended to dataset name in output filename (e.g. '_dev')")
+    parser.add_argument("--max_new_tokens", type=int, default=256,
+                        help="Max new tokens for generation (default 256, outputs are short JSON)")
+    parser.add_argument("--batch_size", type=int, default=16,
+                        help="Batch size for batched generation")
 
     args = parser.parse_args()
 
@@ -393,18 +450,19 @@ def main():
     if args.filter_qrels:
         hf_name = BEIR_DATASET_MAP.get(args.dataset, args.dataset)
         qrel_dataset = f"{hf_name}-qrels"
-        logger.info(f"Loading qrels from {qrel_dataset} for filtering...")
-        ds_qrels = datasets.load_dataset(qrel_dataset, split="test")
+        logger.info(f"Loading qrels from {qrel_dataset} split={args.qrels_split} for filtering...")
+        ds_qrels = datasets.load_dataset(qrel_dataset, split=args.qrels_split)
         qrel_qids = set(str(item["query-id"]) for item in ds_qrels)
         before = len(queries)
         queries = {qid: text for qid, text in queries.items() if qid in qrel_qids}
-        logger.info(f"Filtered to {len(queries)} queries (from {before}) that appear in qrels")
+        logger.info(f"Filtered to {len(queries)} queries (from {before}) that appear in qrels {args.qrels_split}")
 
     if args.max_queries > 0:
         queries = dict(list(queries.items())[:args.max_queries])
         logger.info(f"Limited to {len(queries)} queries")
 
-    reformulator = Qwen3Reformulator(args.model_path, args.device)
+    reformulator = Qwen3Reformulator(args.model_path, args.device, max_new_tokens=args.max_new_tokens)
+    reformulator.batch_size = args.batch_size
 
     for variant_id, variant_config in BEIR_VARIANTS.items():
         logger.info(f"\n{'='*60}")
@@ -413,7 +471,7 @@ def main():
 
         output_path = run_variant(
             reformulator, variant_id, variant_config,
-            queries, args.output_dir, args.dataset
+            queries, args.output_dir, args.dataset, args.output_suffix
         )
         logger.info(f"Output: {output_path}")
 

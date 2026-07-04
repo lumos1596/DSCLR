@@ -14,7 +14,8 @@ dsclr-overview (总览索引)
     ├── dsclr-param-derivation (参数推导方案)
     ├── dual-queries-design (dual-queries 语义设计)
     ├── dsclr-tech-details (技术细节与公式)
-    └── dsclr-exp-results (实验结果速查)
+    ├── dsclr-exp-results (实验结果速查)
+    └── dsclr-residual-bg (V8.5 residual_bg 实验复现手册)
 ```
 
 ## 1. dsclr-param-derivation（参数推导方案）
@@ -27,6 +28,8 @@ dsclr-overview (总览索引)
 - V8 per-query 推理时推导版（测试时逐 query 动态计算 α/β）
 - V8.3 编码噪声问题与解决方案（batch_size=1 确定性编码）
 - V8.4 q_minus 语义质量实验（失败探索：具体化悖论）
+- V8.5 cross-scale residual penalty（背景泄漏预期 + 残差惩罚，惩罚/safety 解耦）
+- V8.6 残差 MAD 归一化 safety gate（2026-06-30，safety = 1 - sigmoid(R_neg/MAD × κ)，替代传统 τ safety gate）
 - 跨系列编码器泛化（RepLLaMA / E5-Mistral / BGE）
 
 **适用场景**：
@@ -125,6 +128,37 @@ invoke Skill: "dsclr-exp-results"
 
 ---
 
+## 5. dsclr-residual-bg（V8.5 Cross-Scale Residual Penalty 实验复现手册）
+
+**用途**：提供 V8.5 residual_bg 机制的完整复现配置，确保迁移后可复现。
+
+**核心内容**：
+- 核心公式（背景泄漏预期、残差提取、MAD 阈值、惩罚/safety 解耦）
+- **V8.6 残差 MAD 归一化 safety gate**（2026-06-30 新增）：`safety = 1 - sigmoid(R_neg/MAD × κ)`，替代缺乏可解释性的传统 τ safety gate
+- κ 参数扫描实验结果（κ=8~12 最优区间）
+- 代码文件清单及关键函数
+- 完整实验配置（环境、参数、命令行）
+- Core17 实验结果（λ 扫描、κ 扫描、与 semantic 对比、per-query 参数）
+- 迁移复现检查清单
+
+**适用场景**：
+- 迁移到新机器后复现 residual_bg 实验
+- 查阅 V8.5 的具体配置和命令行
+- 验证 residual_bg 效果是否一致
+- 了解 residual_bg 与 semantic 模式的差异
+
+**调用方式**：
+```
+invoke Skill: "dsclr-residual-bg"
+```
+
+**关键文件位置**：
+- 主引擎：`eval/engine_deir_dual_v2.py`（boundary_mode=residual_bg）
+- 残差计算：`eval/residual_boundary.py`
+- 结果目录：`results/residual_bg_v85_*/`
+
+---
+
 ## 快速决策指南
 
 **问题类型 → 推荐 Skill**：
@@ -137,8 +171,11 @@ invoke Skill: "dsclr-exp-results"
 | "如何设计 q_plus/q_minus？" | dual-queries-design | 设计原则和案例 |
 | "编码噪声怎么解决？" | dsclr-param-derivation (V8.3) | batch_size=1 方案 |
 | "safety gate 有什么问题？" | dsclr-param-derivation (V8.4) + dual-queries-design | 语义耦合问题 |
+| "residual penalty 机制？" | dsclr-param-derivation (V8.5) + dsclr-tech-details + dsclr-residual-bg | 背景泄漏预期+残差惩罚 |
+| "safety gate 可解释性？" | dsclr-residual-bg (V8.6) | 残差 MAD 归一化 safety gate |
 | "跨编码器泛化效果如何？" | dsclr-param-derivation + dsclr-exp-results | 推导方法 + 结果对比 |
 | "target_avg 怎么计算？" | dsclr-exp-results | 定义和数值 |
+| "如何复现 residual_bg 实验？" | dsclr-residual-bg | 完整配置和复现命令 |
 
 ---
 
@@ -206,6 +243,6 @@ Dual-Queries 设计 (dual-queries-design)
 
 3. **语言一致性**：dsclr-param-derivation 和 dsclr-exp-results 为中文；dual-queries-design 和 dsclr-tech-details 为英文。调用时应注意语言匹配。
 
-4. **版本追踪**：dsclr-param-derivation 包含完整的 V5→V8.4 演进链；dsclr-exp-results 包含各版本结果对比。
+4. **版本追踪**：dsclr-param-derivation 包含完整的 V5→V8.5 演进链；dsclr-residual-bg 包含 V8.5+V8.6 safety gate 更新；dsclr-exp-results 包含各版本结果对比。
 
 5. **失败探索记录**：V8.4（q_minus 语义质量实验）记录在 dsclr-param-derivation 和 dual-queries-design 中，是重要的负面实验结果。

@@ -24,6 +24,7 @@ from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from eval.models.encoder import SentenceTransformerEncoder
+from eval.residual_boundary import compute_background_residual_boundary
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -89,17 +90,18 @@ def load_data():
     return corpus, queries, qrels, dual_data
 
 
-def create_encoder(config):
+def create_encoder(config, encode_batch_size=0):
+    bs = encode_batch_size if encode_batch_size > 0 else 64
     if config["class"] == "repllama":
         from eval.models.repllama_encoder import RepLLaMAEncoder
         return RepLLaMAEncoder(
             model_name=config["model_name"],
-            device="cuda", batch_size=64
+            device="cuda", batch_size=bs
         )
     else:
         return SentenceTransformerEncoder(
             model_name=config["model_name"],
-            device="cuda", batch_size=256,
+            device="cuda", batch_size=bs if bs > 0 else 256,
             normalize_embeddings=True
         )
 
@@ -117,7 +119,7 @@ def encode_and_cache_corpus(corpus, encoder, cache_path):
     doc_ids = sorted(corpus.keys())
     doc_texts = [corpus[did] for did in doc_ids]
     logger.info(f"Encoding {len(doc_texts)} documents...")
-    doc_embeddings = encoder.encode_documents(doc_texts, batch_size=256 if encoder.batch_size >= 256 else 64)
+    doc_embeddings = encoder.encode_documents(doc_texts, batch_size=encoder.batch_size)
     if doc_embeddings.dim() == 2:
         doc_embeddings = F.normalize(doc_embeddings.float(), p=2, dim=1)
 
@@ -147,6 +149,82 @@ def score_deir_dual_v2(s_base, s_req, s_neg, cos_qbase_qneg, has_req, has_neg,
     return s_base + beta * s_req_eff * safety - raw_penalty
 
 
+def _clip(value, bounds):
+    return max(bounds[0], min(value, bounds[1]))
+
+
+def _derive_beta_q_max_mean(s_base_safe, s_req_safe, safety_safe, beta_fallback):
+    """V8 max_mean beta derivation: beta = max(S_base[safe]) / mean(S_req[safe]*safety[safe])."""
+    s_reward = s_req_safe * safety_safe
+    if s_base_safe.numel() == 0 or s_reward.numel() == 0:
+        return beta_fallback
+    max_b = s_base_safe.max()
+    mean_r = s_reward.mean()
+    return float((max_b / mean_r).item()) if mean_r > 1e-8 else beta_fallback
+
+
+def score_deir_dual_v2_residual_bg(s_base, s_req, s_neg, cos_qbase_qneg, has_req, has_neg,
+                                    alpha, beta, delta, t_safety,
+                                    residual_margin_scale, safety_kappa,
+                                    per_query_ab, ab_clip=(0.05, 5.0)):
+    """V8.6 residual_bg scoring: cross-scale residual penalty + MAD-normalized safety gate.
+
+    Mirrors engine_deir_dual_v2.py _score_query_dual_v2 residual_bg branch.
+    """
+    s_req_eff = s_req if has_req else torch.zeros_like(s_base)
+
+    if not has_neg:
+        return s_base + beta * s_req_eff, {}
+
+    boundary = compute_background_residual_boundary(
+        s_base=s_base,
+        s_neg=s_neg,
+        cos_qbase_qneg=cos_qbase_qneg,
+        margin_scale=residual_margin_scale,
+    )
+    overflow = boundary.overflow  # R_neg - m_q
+    smooth_penalty = F.softplus(overflow)
+
+    tau = cos_qbase_qneg + delta
+    if safety_kappa > 0 and boundary.mad > 1e-8:
+        safety = 1.0 - torch.sigmoid(boundary.residual / boundary.mad * safety_kappa)
+        safety_mode = "residual_mad"
+    else:
+        safety = 1.0 - torch.sigmoid((s_neg - tau) * t_safety)
+        safety_mode = "semantic_tau"
+
+    stats = {
+        "safety_mode": safety_mode,
+        "boundary_mad": boundary.mad,
+        "at_risk_ratio": float((overflow > 0).float().mean().item()),
+    }
+
+    if per_query_ab:
+        at_risk_mask = overflow > 0
+        safe_mask = ~at_risk_mask
+        if at_risk_mask.any():
+            mean_base_risk = s_base[at_risk_mask].mean()
+            mean_penalty_risk = smooth_penalty[at_risk_mask].mean()
+            if mean_penalty_risk > 1e-8:
+                alpha = float((mean_base_risk / mean_penalty_risk).item())
+        if has_req and safe_mask.any():
+            beta = _derive_beta_q_max_mean(
+                s_base[safe_mask], s_req[safe_mask], safety[safe_mask], beta
+            )
+        alpha = _clip(alpha, ab_clip)
+        beta = _clip(beta, ab_clip)
+        stats.update({
+            "alpha_q": alpha,
+            "beta_q": beta,
+            "num_at_risk": int(at_risk_mask.sum().item()),
+            "num_safe": int(safe_mask.sum().item()),
+        })
+
+    raw_penalty = alpha * smooth_penalty
+    s_final = s_base + beta * s_req_eff * safety - raw_penalty
+    return s_final, stats
+
+
 def evaluate(run_data, qrels, eval_qids):
     evaluator = pytrec_eval.RelevanceEvaluator(
         {qid: qrels[qid] for qid in eval_qids},
@@ -163,6 +241,25 @@ def evaluate(run_data, qrels, eval_qids):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--encoder", type=str, default="bge", choices=["repllama", "bge"])
+    parser.add_argument("--boundary_mode", type=str, default="legacy",
+                        choices=["legacy", "residual_bg"],
+                        help="legacy=V5 gap_w formula; residual_bg=V8.6 cross-scale residual")
+    parser.add_argument("--alpha", type=float, default=ALPHA)
+    parser.add_argument("--beta", type=float, default=BETA)
+    parser.add_argument("--delta", type=float, default=DELTA)
+    parser.add_argument("--t_safety", type=float, default=T_SAFETY)
+    parser.add_argument("--residual_margin_scale", type=float, default=2.0,
+                        help="λ for MAD-based penalty margin")
+    parser.add_argument("--safety_kappa", type=float, default=10.0,
+                        help="κ for residual MAD safety gate; 0=fall back to legacy τ")
+    parser.add_argument("--per_query_ab", action="store_true",
+                        help="Enable V8 per-query α/β derivation")
+    parser.add_argument("--beta_derive_mode", type=str, default="max_mean",
+                        choices=["max_mean"], help="β derivation mode (only max_mean supported here)")
+    parser.add_argument("--output_dir", type=str, default=None,
+                        help="Output dir for results JSON (overrides config path)")
+    parser.add_argument("--encode_batch_size", type=int, default=0,
+                        help="Override encoder batch_size (0=use encoder default)")
     args = parser.parse_args()
 
     config = ENCODER_CONFIGS[args.encoder]
@@ -176,7 +273,8 @@ def main():
     logger.info(f"Corpus: {len(corpus)} docs, Queries: {len(queries)}, Eval queries: {len(eval_qids)}")
     logger.info(f"Dual queries loaded: {len(dual_data)}")
 
-    encoder = create_encoder(config)
+    encoder = create_encoder(config, args.encode_batch_size)
+    enc_bs = args.encode_batch_size if args.encode_batch_size > 0 else 256
 
     doc_ids, doc_embeddings = encode_and_cache_corpus(corpus, encoder, config["embedding_cache"])
     doc_embeddings = F.normalize(doc_embeddings.float(), p=2, dim=1).to('cuda')
@@ -189,7 +287,7 @@ def main():
     logger.info("\n--- Baseline: Original Query ---")
     q_base_list = [queries[qid] for qid in eval_qids]
     q_base_prefixed = [q_prefix + q for q in q_base_list] if q_prefix else q_base_list
-    q_base_emb = F.normalize(encoder.encode_queries(q_base_prefixed, batch_size=256).float(), p=2, dim=1)
+    q_base_emb = F.normalize(encoder.encode_queries(q_base_prefixed, batch_size=enc_bs).float(), p=2, dim=1)
 
     S_base = torch.matmul(q_base_emb.to('cuda'), doc_embeddings.T).float().cpu()
 
@@ -210,7 +308,19 @@ def main():
     # ============================================================
     # DeIR-Dual V2
     # ============================================================
-    logger.info(f"\n--- DeIR-Dual V2 (alpha={ALPHA}, beta={BETA}, delta={DELTA}) ---")
+    use_residual_bg = (args.boundary_mode == "residual_bg")
+    log_params = {
+        "boundary_mode": args.boundary_mode,
+        "alpha": args.alpha, "beta": args.beta, "delta": args.delta,
+        "t_safety": args.t_safety,
+        "residual_margin_scale": args.residual_margin_scale,
+        "safety_kappa": args.safety_kappa,
+        "per_query_ab": args.per_query_ab,
+        "beta_derive_mode": args.beta_derive_mode,
+    } if use_residual_bg else {
+        "alpha": args.alpha, "beta": args.beta, "delta": args.delta,
+    }
+    logger.info(f"\n--- DeIR-Dual V2 ({log_params}) ---")
 
     q_req_list = []
     q_neg_list = []
@@ -242,11 +352,11 @@ def main():
 
     logger.info("Encoding Q_req (Q+)...")
     q_req_prefixed = [q_prefix + q for q in q_req_list] if q_prefix else q_req_list
-    q_req_emb = F.normalize(encoder.encode_queries(q_req_prefixed, batch_size=256).float(), p=2, dim=1)
+    q_req_emb = F.normalize(encoder.encode_queries(q_req_prefixed, batch_size=enc_bs).float(), p=2, dim=1)
 
     logger.info("Encoding Q_neg (Q-)...")
     q_neg_prefixed = [q_prefix + q for q in q_neg_list] if q_prefix else q_neg_list
-    q_neg_emb = F.normalize(encoder.encode_queries(q_neg_prefixed, batch_size=256).float(), p=2, dim=1)
+    q_neg_emb = F.normalize(encoder.encode_queries(q_neg_prefixed, batch_size=enc_bs).float(), p=2, dim=1)
 
     logger.info("Computing S_base for top-k candidates...")
     S_base_full = torch.matmul(q_base_emb.to('cuda'), doc_embeddings.T).float().cpu()
@@ -282,6 +392,7 @@ def main():
 
     logger.info("Applying DeIR-Dual V2 scoring...")
     S_final_topk = torch.zeros(len(eval_qids), TOP_K)
+    all_stats = []
     for i in range(len(eval_qids)):
         valid_mask = top_k_indices[i] >= 0
         if valid_mask.sum() == 0:
@@ -291,12 +402,27 @@ def main():
         s_r = S_req_topk[i, :k]
         s_n = S_neg_topk[i, :k]
 
-        s_final = score_deir_dual_v2(
-            s_base=s_b, s_req=s_r, s_neg=s_n,
-            cos_qbase_qneg=float(cos_qbase_qneg[i].item()),
-            has_req=bool(has_req_mask[i] > 0),
-            has_neg=bool(has_neg_mask[i] > 0),
-        )
+        if use_residual_bg:
+            s_final, stats = score_deir_dual_v2_residual_bg(
+                s_base=s_b, s_req=s_r, s_neg=s_n,
+                cos_qbase_qneg=float(cos_qbase_qneg[i].item()),
+                has_req=bool(has_req_mask[i] > 0),
+                has_neg=bool(has_neg_mask[i] > 0),
+                alpha=args.alpha, beta=args.beta, delta=args.delta,
+                t_safety=args.t_safety,
+                residual_margin_scale=args.residual_margin_scale,
+                safety_kappa=args.safety_kappa,
+                per_query_ab=args.per_query_ab,
+            )
+            all_stats.append(stats)
+        else:
+            s_final = score_deir_dual_v2(
+                s_base=s_b, s_req=s_r, s_neg=s_n,
+                cos_qbase_qneg=float(cos_qbase_qneg[i].item()),
+                has_req=bool(has_req_mask[i] > 0),
+                has_neg=bool(has_neg_mask[i] > 0),
+                alpha=args.alpha, beta=args.beta, delta=args.delta,
+            )
         S_final_topk[i, :k] = s_final
 
     run_deir = {}
@@ -368,8 +494,28 @@ def main():
         "params": {"alpha": ALPHA, "beta": BETA, "delta": DELTA, "t_safety": T_SAFETY, "top_k": TOP_K},
         "q_minus_rate": f"{int(sum(has_neg_mask))}/{len(has_neg_mask)}",
     }
-    output_path = config["results_path"]
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    if use_residual_bg:
+        output["params"] = {
+            "boundary_mode": args.boundary_mode,
+            "alpha": args.alpha, "beta": args.beta, "delta": args.delta,
+            "t_safety": args.t_safety,
+            "residual_margin_scale": args.residual_margin_scale,
+            "safety_kappa": args.safety_kappa,
+            "per_query_ab": args.per_query_ab,
+            "beta_derive_mode": args.beta_derive_mode,
+            "top_k": TOP_K,
+        }
+        if all_stats:
+            agg_stats = {}
+            for key in ["boundary_mad", "at_risk_ratio", "alpha_q", "beta_q", "num_at_risk", "num_safe"]:
+                vals = [s.get(key) for s in all_stats if key in s]
+                if vals:
+                    agg_stats[f"mean_{key}"] = float(np.mean(vals))
+            output["residual_bg_stats"] = agg_stats
+    output_path = args.output_dir if args.output_dir else config["results_path"]
+    if not output_path.endswith(".json"):
+        output_path = os.path.join(output_path, "metrics_summary.json")
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     with open(output_path, 'w') as f:
         json.dump(output, f, indent=2)
     print(f"\nResults saved to {output_path}")

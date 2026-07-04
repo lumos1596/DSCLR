@@ -23,13 +23,17 @@ Usage:
 """
 
 import os, sys, json, argparse, logging
+
+# Ensure HF offline mode is disabled and mirror is set BEFORE any HF/torch imports
+os.environ["HF_HUB_OFFLINE"] = "0"
+os.environ["HF_DATASETS_OFFLINE"] = "1"
+if "HF_ENDPOINT" not in os.environ:
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+
 import numpy as np, torch, torch.nn.functional as F
+from eval.residual_boundary import compute_background_residual_boundary
 
 torch.cuda._lazy_init()
-
-os.environ.pop("HF_ENDPOINT", None)
-os.environ.pop("HF_HUB_OFFLINE", None)
-os.environ.pop("HF_DATASETS_OFFLINE", None)
 
 from tqdm import tqdm
 from PIL import Image
@@ -84,18 +88,18 @@ def load_clip_model(pretrained_key, device):
     if pretrained_key == "negclip":
         from huggingface_hub import hf_hub_download
         model_path = hf_hub_download("Nano1337/negclip", "open_clip_pytorch_model.bin")
-        model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=model_path)
+        model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=model_path, weights_only=False)
     elif pretrained_key == "openai":
         local_path = os.path.expanduser("~/.cache/clip/ViT-B-32.pt")
         if os.path.exists(local_path):
             logger.info(f"Using local OpenAI CLIP weights: {local_path}")
-            model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=local_path)
+            model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=local_path, weights_only=False)
         else:
             model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=pretrained_tag)
     elif pretrained_key == "laion400m":
-        model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=pretrained_tag, quick_gelu=True)
+        model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=pretrained_tag, quick_gelu=True, weights_only=False)
     else:
-        model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=pretrained_tag)
+        model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=pretrained_tag, weights_only=False)
     model = model.to(device).eval()
     tokenizer = open_clip.get_tokenizer(model_name)
     logger.info(f"Model loaded: {cfg['desc']}")
@@ -225,18 +229,85 @@ def is_none_query(q):
     return not q or q.strip().lower() in ['none', '[none]', 'n/a', 'null', '']
 
 
+def _clip(v, lo=0.05, hi=5.0):
+    return max(lo, min(hi, v))
+
+
+def _derive_beta_q_max_mean(s_base_safe, s_req_safe, safety_safe, beta_fb):
+    if s_base_safe.numel() == 0 or s_req_safe.numel() == 0:
+        return beta_fb
+    mean_b = s_base_safe.mean()
+    max_r = (s_req_safe * safety_safe).max()
+    return float((mean_b / max_r).item()) if max_r > 1e-8 else beta_fb
+
+
 def score_deir_dual_v2(s_base, s_req, s_neg, cos_qbase_qneg, has_req, has_neg,
-                       alpha=ALPHA, beta=BETA, delta=DELTA):
-    if not has_neg:
-        s_req_eff = s_req if has_req else torch.zeros_like(s_base)
-        return s_base + beta * s_req_eff
-    tau = cos_qbase_qneg + delta
-    overflow = s_neg - tau
-    smooth_penalty = F.softplus(overflow)
-    raw_penalty = alpha * smooth_penalty
-    safety = 1.0 - torch.sigmoid((s_neg - tau) * T_SAFETY)
+                       alpha=ALPHA, beta=BETA, delta=DELTA,
+                       boundary_mode="legacy",
+                       residual_margin_scale=2.0,
+                       safety_kappa=0.0,
+                       per_query_ab=False,
+                       ab_clip=(0.05, 5.0)):
+    """Score with legacy V5 or V8.6 residual_bg mode."""
+    stats = {}
     s_req_eff = s_req if has_req else torch.zeros_like(s_base)
-    return s_base + beta * s_req_eff * safety - raw_penalty
+    if not has_neg:
+        if per_query_ab and has_req and s_base.numel() > 0:
+            safety = torch.ones_like(s_base)
+            beta = _clip(_derive_beta_q_max_mean(s_base, s_req, safety, beta), ab_clip[0], ab_clip[1])
+            stats["beta_q"] = beta
+        return s_base + beta * s_req_eff, stats
+
+    # --- penalty & safety gate ---
+    if boundary_mode == "residual_bg":
+        boundary = compute_background_residual_boundary(
+            s_base=s_base.float(), s_neg=s_neg.float(),
+            cos_qbase_qneg=cos_qbase_qneg, margin_scale=residual_margin_scale,
+        )
+        overflow = boundary.overflow  # R_neg - lambda*MAD
+        smooth_penalty = F.softplus(overflow)
+
+        tau = cos_qbase_qneg + delta
+        if safety_kappa > 0 and boundary.mad > 1e-8:
+            safety = 1.0 - torch.sigmoid(boundary.residual / boundary.mad * safety_kappa)
+            stats["safety_mode"] = "residual_mad"
+        else:
+            safety = 1.0 - torch.sigmoid((s_neg - tau) * T_SAFETY)
+            stats["safety_mode"] = "semantic_tau"
+
+        stats.update({
+            "mad": boundary.mad, "margin": boundary.margin,
+            "at_risk_ratio": float((overflow > 0).float().mean()),
+        })
+    else:  # legacy
+        tau = cos_qbase_qneg + delta
+        overflow = s_neg - tau
+        smooth_penalty = F.softplus(overflow)
+        safety = 1.0 - torch.sigmoid((s_neg - tau) * T_SAFETY)
+        stats["safety_mode"] = "semantic_tau"
+        stats["at_risk_ratio"] = float((overflow > 0).float().mean())
+
+    # --- per-query ab ---
+    if per_query_ab:
+        at_risk_mask = overflow > 0
+        safe_mask = ~at_risk_mask
+        if at_risk_mask.any():
+            mbr = s_base[at_risk_mask].mean()
+            mpr = smooth_penalty[at_risk_mask].mean()
+            if mpr > 1e-8:
+                alpha = _clip(float((mbr / mpr).item()), ab_clip[0], ab_clip[1])
+        if has_req and safe_mask.any():
+            beta = _clip(
+                _derive_beta_q_max_mean(s_base[safe_mask], s_req[safe_mask],
+                                        safety[safe_mask], beta),
+                ab_clip[0], ab_clip[1],
+            )
+        stats["alpha_q"] = alpha
+        stats["beta_q"] = beta
+
+    raw_penalty = alpha * smooth_penalty
+    s_final = s_base + beta * s_req_eff * safety - raw_penalty
+    return s_final, stats
 
 
 def main():
@@ -246,6 +317,15 @@ def main():
                         choices=list(PRETRAINED_CONFIG.keys()),
                         help="CLIP pretrained variant")
     parser.add_argument("--subset", type=int, default=0, help="Use subset of data (0=all)")
+    parser.add_argument("--boundary_mode", type=str, default="legacy",
+                        choices=["legacy", "residual_bg"],
+                        help="legacy=V5 gap_w formula; residual_bg=V8.6 cross-scale residual")
+    parser.add_argument("--residual_margin_scale", type=float, default=2.0,
+                        help="lambda for MAD-based penalty margin")
+    parser.add_argument("--safety_kappa", type=float, default=10.0,
+                        help="kappa for residual MAD safety gate; 0=fall back to legacy tau")
+    parser.add_argument("--per_query_ab", action="store_true",
+                        help="Enable V8 per-query alpha/beta derivation")
     args = parser.parse_args()
 
     cfg = PRETRAINED_CONFIG[args.pretrained]
@@ -410,13 +490,17 @@ def main():
         S_final_topk = torch.zeros(total_queries, TOP_K)
         for i in range(total_queries):
             k = min(TOP_K, num_images)
-            s_final = score_deir_dual_v2(
+            s_final, _ = score_deir_dual_v2(
                 s_base=S_base_topk[i, :k],
                 s_req=S_req_topk[i, :k],
                 s_neg=S_neg_topk[i, :k],
                 cos_qbase_qneg=float(cos_qbase_qneg[i].item()),
                 has_req=bool(has_req_mask[i] > 0),
                 has_neg=bool(has_neg_mask[i] > 0),
+                boundary_mode=args.boundary_mode,
+                residual_margin_scale=args.residual_margin_scale,
+                safety_kappa=args.safety_kappa,
+                per_query_ab=args.per_query_ab,
             )
             S_final_topk[i, :k] = s_final
 
@@ -471,7 +555,8 @@ def main():
     if qplus_metrics:
         print(f"{'Q_plus only':<35} {qplus_metrics['image_retrieval_recall@1']:>8.4f} {qplus_metrics['image_retrieval_recall@5']:>8.4f} {qplus_metrics['image_retrieval_recall@10']:>8.4f}")
     if deir_metrics:
-        print(f"{'DeIR-Dual V2 (full)':<35} {deir_metrics['image_retrieval_recall@1']:>8.4f} {deir_metrics['image_retrieval_recall@5']:>8.4f} {deir_metrics['image_retrieval_recall@10']:>8.4f}")
+        deir_label = f"DeIR-Dual V2 ({args.boundary_mode})"
+        print(f"{deir_label:<35} {deir_metrics['image_retrieval_recall@1']:>8.4f} {deir_metrics['image_retrieval_recall@5']:>8.4f} {deir_metrics['image_retrieval_recall@10']:>8.4f}")
         print("-" * 80)
         for k_val in [1, 5, 10]:
             m = f"image_retrieval_recall@{k_val}"
@@ -487,11 +572,16 @@ def main():
         "baseline_negated": baseline_metrics,
         "qplus_only": qplus_metrics,
         "deir_dual_v2": deir_metrics,
-        "params": {"alpha": ALPHA, "beta": BETA, "delta": DELTA, "t_safety": T_SAFETY},
+        "params": {"alpha": ALPHA, "beta": BETA, "delta": DELTA, "t_safety": T_SAFETY,
+                   "boundary_mode": args.boundary_mode,
+                   "residual_margin_scale": args.residual_margin_scale,
+                   "safety_kappa": args.safety_kappa,
+                   "per_query_ab": args.per_query_ab},
     }
 
     os.makedirs("results/coconeg", exist_ok=True)
-    results_path = f"results/coconeg/coconeg_{args.pretrained}_results.json"
+    suffix = f"_{args.boundary_mode}" if args.boundary_mode != "legacy" else ""
+    results_path = f"results/coconeg/coconeg_{args.pretrained}{suffix}_results.json"
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=2)
     logger.info(f"Results saved to {results_path}")

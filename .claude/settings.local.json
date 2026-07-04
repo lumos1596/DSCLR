@@ -1,13 +1,18 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3:*)",
-      "Bash(python:*)",
-      "Bash(pip install:*)",
-      "Bash(conda run:*)",
-      "Bash(/home/luwa/.conda/envs/dsclr/bin/python:*)",
-      "Bash(source:*)",
-      "Bash(conda activate:*)"
+      "WebSearch",
+      "WebFetch(domain:aaai.org)",
+      "Bash(find /home/luwa -name \"aaai*.sty\" -o -name \"aaai2026*.cls\" -o -name \"aaai*.cls\" 2>/dev/null | head -10)",
+      "Read(//home/luwa/**)",
+      "WebFetch(domain:ojs.aaai.org)",
+      "WebFetch(domain:github.com)",
+      "Bash(curl -s \"https://api.github.com/repos/aaai/aaai-template/contents\")",
+      "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(f['name'], f['type']\\) for f in data]\")",
+      "Bash(apt list *)",
+      "Bash(unzip -q /tmp/clawd-on-desk.zip -d /tmp/clawd-on-desk/)",
+      "Bash(npm --version)",
+      "Bash(tar -xJf /tmp/node.tar.xz -C ~/bin)"
     ]
   }
 }

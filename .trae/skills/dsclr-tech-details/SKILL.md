@@ -19,6 +19,38 @@ V1 → V2 三大升级:
 2. Softplus 平滑惩罚: 替代 ReLU 硬截断
 3. 条件性奖励: safety 门控防止踩雷文档被推高
 
+### V8.5 Cross-Scale Residual Penalty 模式（boundary_mode=residual_bg）
+
+**核心改进**：将惩罚和 safety gate 解耦。惩罚基于残差（超出背景泄漏预期的部分），safety gate 仍基于传统 τ。
+
+```
+# 背景泄漏预期
+c_q = cos(h_base, h_neg)
+z_b(d) = (S_base(d) - μ_b) / σ_b
+Ŝ_neg^bg(d) = μ_n + σ_n × c_q × z_b(d)
+
+# 残差 + MAD robust threshold
+R_neg(d) = S_neg(d) - Ŝ_neg^bg(d)
+m_q = λ × MAD(R_neg)          # λ=margin_scale, 默认1.0, 推荐2.0
+
+# 惩罚项（残差机制，不加 delta）
+penalty = α × Softplus(R_neg - m_q)
+
+# Safety gate（传统 τ，不变）
+τ = Cos(Q_base, Q_neg) + δ
+safety = 1 - sigmoid((S_neg - τ) × T_safety)
+
+# 最终打分
+S_final = S_base + β × S_req × safety - penalty
+```
+
+**与 semantic 模式的区别**：
+- semantic: overflow = S_neg - τ, penalty = α × Softplus(overflow), safety = 1 - sigmoid(overflow × T_safety)
+- residual_bg: overflow = R_neg - m_q, penalty = α × Softplus(overflow), safety = 1 - sigmoid((S_neg - τ) × T_safety)
+- 关键差异：惩罚基于残差（更精准），safety 基于原始 S_neg（不变）
+
+**效果**：Core17 上 p-MRR 从 0.1542 提升到 0.1670（+8.3%），α_q 从 fallback 0.5 变为有效推导 0.985
+
 ### 阈值方案变体
 
 **详见**：[dsclr-param-derivation skill](../dsclr-param-derivation/SKILL.md) 的"公式体系 V5 - 阈值方案变体"章节。

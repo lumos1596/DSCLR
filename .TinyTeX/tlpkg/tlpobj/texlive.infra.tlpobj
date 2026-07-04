@@ -1,0 +1,46 @@
+name texlive.infra
+category TLCore
+revision 69740
+shortdesc basic TeX Live infrastructure
+longdesc This package contains the files needed to get tlmgr running:
+longdesc perl modules, xz binaries, plus (sometimes) tar, wget, lz4, and
+longdesc various other support files. This package also represents the
+longdesc tlcritical recovery scripts. The standalone installer is close,
+longdesc but not the same; it's defined in 00texlive.installer.
+depend texlive.infra.ARCH
+containersize 361928
+containerchecksum d3ef23150149d240d8b74f5b9f6126de90f44960238deefa94415310586790d5324f9fd83478fa4d726ef6dff516f5382222f56933599b384101521a66d0a248
+doccontainersize 203936
+doccontainerchecksum fb06ad12bea2d062dd5e2049e74e096064198242f010cd6e04e2d4a92a7fc39ae829003c7ed3f8347f96c99c31e26ec44073b45ed3ebbe9e18fc78e801d00c94
+runfiles size=327
+ LICENSE.CTAN
+ LICENSE.TL
+ release-texlive.txt
+ texmf-dist/scripts/texlive/mktexlsr
+ texmf-dist/scripts/texlive/tl-errmess.vbs
+ texmf-dist/scripts/texlive/tlmgr.pl
+ texmf-dist/scripts/texlive/tlmgrgui.pl
+ texmf-dist/scripts/texlive/uninstall-windows.pl
+ texmf-dist/scripts/texlive/uninstq.vbs
+ texmf-dist/web2c/fmtutil-hdr.cnf
+ texmf-dist/web2c/updmap-hdr.cfg
+ tlpkg/TeXLive/TLConfFile.pm
+ tlpkg/TeXLive/TLConfig.pm
+ tlpkg/TeXLive/TLCrypto.pm
+ tlpkg/TeXLive/TLDownload.pm
+ tlpkg/TeXLive/TLPDB.pm
+ tlpkg/TeXLive/TLPOBJ.pm
+ tlpkg/TeXLive/TLPSRC.pm
+ tlpkg/TeXLive/TLPaper.pm
+ tlpkg/TeXLive/TLTREE.pm
+ tlpkg/TeXLive/TLUtils.pm
+ tlpkg/TeXLive/TLWinGoo.pm
+ tlpkg/TeXLive/TeXCatalogue.pm
+ tlpkg/TeXLive/trans.pl
+ tlpkg/gpg/pubring.gpg
+ tlpkg/gpg/random_seed
+ tlpkg/gpg/secring.gpg
+ tlpkg/gpg/tl-key-extension.txt
+ tlpkg/gpg/trustdb.gpg
+ tlpkg/installer/config.guess
+ tlpkg/installer/curl/curl-ca-bundle.crt

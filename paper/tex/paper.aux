@@ -2,19 +2,18 @@
 \providecommand\hyper@newdestlabel[2]{}
 \providecommand\HyField@AuxAddToFields[1]{}
 \providecommand\HyField@AuxAddToCoFields[2]{}
-\citation{karpukhin2020dpr}
-\citation{followir2024}
 \citation{gao2023hyde}
 \citation{wang2023query2doc}
-\citation{raudaschl2024ragfusion}
 \citation{li2025deepretrieval}
+\citation{raudaschl2024ragfusion}
+\citation{followir2024}
 \citation{followir2024}
 \citation{weller2024promptriever}
 \citation{dualview2026}
 \citation{deo2026}
-\citation{followir2024}
 \@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
 \newlabel{sec:introduction}{{1}{1}{Introduction}{section.1}{}}
+\citation{followir2024}
 \citation{gao2023hyde}
 \citation{wang2023query2doc}
 \citation{raudaschl2024ragfusion}
@@ -44,75 +43,85 @@
 \citation{deo2026}
 \citation{negclip2022}
 \citation{coconeg2024}
-\citation{followir2024}
 \@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{2}{section.2}\protected@file@percent }
 \newlabel{sec:related-work}{{2}{2}{Related Work}{section.2}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Query Rewriting and Semantic Enhancement}{2}{subsection.2.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Instruction-Following Retrieval}{2}{subsection.2.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Negation-Aware Retrieval}{2}{subsection.2.3}\protected@file@percent }
+\citation{followir2024}
 \citation{followir2024}
 \citation{followir2024}
 \citation{deo2024}
-\@writefile{toc}{\contentsline {section}{\numberline {3}Method: DeIR-Dual V2}{3}{section.3}\protected@file@percent }
-\newlabel{sec:method}{{3}{3}{Method: DeIR-Dual V2}{section.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Negation-Aware Retrieval}{3}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Method: DeIR-Dual}{3}{section.3}\protected@file@percent }
+\newlabel{sec:method}{{3}{3}{Method: DeIR-Dual}{section.3}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Problem Formulation}{3}{subsection.3.1}\protected@file@percent }
 \newlabel{sec:problem-formulation}{{3.1}{3}{Problem Formulation}{subsection.3.1}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Triple-Query Decomposition}{3}{subsection.3.2}\protected@file@percent }
 \newlabel{sec:dual-query-generation}{{3.2}{3}{Triple-Query Decomposition}{subsection.3.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Dual-Track Scoring and Non-Linear Coupling}{3}{subsection.3.3}\protected@file@percent }
-\newlabel{sec:scoring-formula}{{3.3}{3}{Dual-Track Scoring and Non-Linear Coupling}{subsection.3.3}{}}
-\@writefile{toc}{\contentsline {subsubsection}{The Penalty Track: Adaptive Exclusion Boundary}{4}{section*.1}\protected@file@percent }
-\newlabel{eq:tau}{{1}{4}{The Penalty Track: Adaptive Exclusion Boundary}{equation.1}{}}
-\newlabel{eq:gap}{{2}{4}{The Penalty Track: Adaptive Exclusion Boundary}{equation.2}{}}
-\newlabel{eq:penalty}{{3}{4}{The Penalty Track: Adaptive Exclusion Boundary}{equation.3}{}}
-\@writefile{toc}{\contentsline {subsubsection}{The Reward Track: Conditional Enhancement}{4}{section*.2}\protected@file@percent }
-\newlabel{eq:safety}{{4}{4}{The Reward Track: Conditional Enhancement}{equation.4}{}}
-\newlabel{eq:final}{{5}{4}{The Reward Track: Conditional Enhancement}{equation.5}{}}
-\citation{guo2017temperature}
+\citation{conneau2018wordtranslation}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Decision-Layer Score Composition}{4}{subsection.3.3}\protected@file@percent }
+\newlabel{sec:scoring-formula}{{3.3}{4}{Decision-Layer Score Composition}{subsection.3.3}{}}
+\newlabel{eq:channel-scores}{{1}{4}{Decision-Layer Score Composition}{equation.1}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Background Leakage Estimation}{4}{section*.1}\protected@file@percent }
+\newlabel{eq:base-zscore}{{2}{4}{Background Leakage Estimation}{equation.2}{}}
+\newlabel{eq:query-overlap}{{3}{4}{Background Leakage Estimation}{equation.3}{}}
+\newlabel{eq:bg-estimate}{{4}{4}{Background Leakage Estimation}{equation.4}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Residual Exclusion Penalty}{4}{section*.2}\protected@file@percent }
+\newlabel{eq:residual}{{5}{4}{Residual Exclusion Penalty}{equation.5}{}}
+\newlabel{eq:mad-margin}{{6}{4}{Residual Exclusion Penalty}{equation.6}{}}
+\newlabel{eq:residual-penalty}{{7}{4}{Residual Exclusion Penalty}{equation.7}{}}
 \citation{platt1999probabilistic}
-\citation{amati2002dfr}
-\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Overview of DeIR-Dual{} V2. A query and its instruction are decomposed by an LLM into three queries ($Q_{\text  {base}}$, $Q_{\text  {pos}}$, $Q_{\text  {minus}}$), independently encoded, and scored via the nonlinear decision mechanism in Eq. \ref {eq:final}. The Safety Gate (Eq. \ref {eq:safety}) conditionally suppresses the enhancement signal when a document triggers the exclusion threshold $\tau $, enabling what linear vector operations cannot: selective, conditional suppression that penalizes trap documents while preserving relevant document rankings.}}{5}{figure.caption.3}\protected@file@percent }
+\citation{guo2017temperature}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Overview of DeIR-Dual{}. A query and its instruction are decomposed by an LLM into three queries ($Q_{\text  {base}}$, $Q_{\text  {pos}}$, $Q_{\text  {minus}}$), independently encoded, and scored via the decision-layer mechanism in Eq. \ref {eq:final}. The scorer first estimates background leakage in the negative channel, extracts a residual exclusion signal, and then applies a residual penalty together with a safety-gated positive reward. This allows conditional suppression of documents whose negative residual exceeds the background estimate while preserving rankings for documents supported by the base and positive channels.}}{5}{figure.caption.4}\protected@file@percent }
 \providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
-\newlabel{fig:pipeline}{{1}{5}{Overview of \method {} V2. A query and its instruction are decomposed by an LLM into three queries ($\qbase $, $\qpos $, $\qminus $), independently encoded, and scored via the nonlinear decision mechanism in Eq. \ref {eq:final}. The Safety Gate (Eq. \ref {eq:safety}) conditionally suppresses the enhancement signal when a document triggers the exclusion threshold $\tau $, enabling what linear vector operations cannot: selective, conditional suppression that penalizes trap documents while preserving relevant document rankings}{figure.caption.3}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {4}Scale Alignment: From Empirical Search to Statistical Calibration}{5}{section.4}\protected@file@percent }
-\newlabel{sec:parameter-derivation}{{4}{5}{Scale Alignment: From Empirical Search to Statistical Calibration}{section.4}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}The Symmetry of Reward and Penalty ($\alpha $ and $\beta $)}{5}{subsection.4.1}\protected@file@percent }
-\newlabel{sec:scale-alignment}{{4.1}{5}{The Symmetry of Reward and Penalty ($\alpha $ and $\beta $)}{subsection.4.1}{}}
-\@writefile{toc}{\contentsline {subsubsection}{Penalty Calibration ($\alpha $): Neutralizing Topical Bias}{5}{section*.4}\protected@file@percent }
-\newlabel{eq:alpha}{{6}{5}{Penalty Calibration ($\alpha $): Neutralizing Topical Bias}{equation.6}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces $\alpha $ derivation across 30 candidate strategies (representative subset shown; full list in Appendix \ref {sec:alpha-appendix}). Group~A methods exhibit a striking consensus around $\alpha \approx 1.0$. Groups B--E are conservative (under-penalize), while Group~F explores boundary cases that violate the Minimal Intervention principle.}}{6}{table.caption.6}\protected@file@percent }
-\newlabel{tab:alpha-derivation}{{1}{6}{$\alpha $ derivation across 30 candidate strategies (representative subset shown; full list in Appendix \ref {sec:alpha-appendix}). Group~A methods exhibit a striking consensus around $\alpha \approx 1.0$. Groups B--E are conservative (under-penalize), while Group~F explores boundary cases that violate the Minimal Intervention principle}{table.caption.6}{}}
-\@writefile{toc}{\contentsline {subsubsection}{Enhancement Calibration ($\beta $): The Information Premium}{6}{section*.5}\protected@file@percent }
-\newlabel{eq:beta}{{7}{6}{Enhancement Calibration ($\beta $): The Information Premium}{equation.7}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}The Zero-Bias Threshold ($\delta $)}{6}{subsection.4.2}\protected@file@percent }
-\newlabel{sec:delta-derivation}{{4.2}{6}{The Zero-Bias Threshold ($\delta $)}{subsection.4.2}{}}
-\newlabel{eq:delta}{{8}{6}{The Zero-Bias Threshold ($\delta $)}{equation.8}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Comparison of DeIR-Dual{} V2 with six query rewriting methods on the FollowIR benchmark. DeIR-Dual{} V2 leads in mean p-MRR by 9.0$\times $ over HyDE and 44.3$\times $ over DeepRetrieval, while also achieving the highest target\_avg.}}{7}{table.caption.7}\protected@file@percent }
-\newlabel{tab:followir-main}{{2}{7}{Comparison of \method {} V2 with six query rewriting methods on the FollowIR benchmark. \method {} V2 leads in mean p-MRR by 9.0$\times $ over HyDE and 44.3$\times $ over DeepRetrieval, while also achieving the highest target\_avg}{table.caption.7}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Training-Set vs.\ Test-Set Derivation}{7}{subsection.4.3}\protected@file@percent }
-\newlabel{sec:train-vs-test}{{4.3}{7}{Training-Set vs.\ Test-Set Derivation}{subsection.4.3}{}}
+\newlabel{fig:pipeline}{{1}{5}{Overview of \method {}. A query and its instruction are decomposed by an LLM into three queries ($\qbase $, $\qpos $, $\qminus $), independently encoded, and scored via the decision-layer mechanism in Eq. \ref {eq:final}. The scorer first estimates background leakage in the negative channel, extracts a residual exclusion signal, and then applies a residual penalty together with a safety-gated positive reward. This allows conditional suppression of documents whose negative residual exceeds the background estimate while preserving rankings for documents supported by the base and positive channels}{figure.caption.4}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Residual-Normalized Safety Gate}{5}{section*.3}\protected@file@percent }
+\newlabel{eq:safety}{{8}{5}{Residual-Normalized Safety Gate}{equation.8}{}}
+\newlabel{eq:final}{{9}{5}{Residual-Normalized Safety Gate}{equation.9}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Inference-Time Score Calibration}{5}{section.4}\protected@file@percent }
+\newlabel{sec:parameter-derivation}{{4}{5}{Inference-Time Score Calibration}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Candidate-Set Score Calibration}{5}{subsection.4.1}\protected@file@percent }
+\newlabel{sec:scale-alignment}{{4.1}{5}{Candidate-Set Score Calibration}{subsection.4.1}{}}
+\citation{followir2024}
+\citation{followir2024}
+\citation{followir2024}
+\newlabel{eq:residual-excess}{{10}{6}{Candidate-Set Score Calibration}{equation.10}{}}
+\newlabel{eq:exceeding-set}{{11}{6}{Candidate-Set Score Calibration}{equation.11}{}}
+\newlabel{eq:alpha}{{12}{6}{Candidate-Set Score Calibration}{equation.12}{}}
+\newlabel{eq:safe-set}{{13}{6}{Candidate-Set Score Calibration}{equation.13}{}}
+\newlabel{eq:beta}{{14}{6}{Candidate-Set Score Calibration}{equation.14}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Residual Margin and Gate Scale}{6}{subsection.4.2}\protected@file@percent }
+\newlabel{sec:residual-calibration}{{4.2}{6}{Residual Margin and Gate Scale}{subsection.4.2}{}}
+\newlabel{eq:residual-margin-scale}{{15}{6}{Residual Margin and Gate Scale}{equation.15}{}}
+\newlabel{eq:residual-gate-scale}{{16}{6}{Residual Margin and Gate Scale}{equation.16}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Label-Free Inference-Time Derivation}{6}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:train-vs-test}{{4.3}{6}{Label-Free Inference-Time Derivation}{subsection.4.3}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Performance of existing retrieval methods and DeIR-Dual on the FollowIR benchmark \cite  {followir2024}. All metrics are percentages ($\times 100$). DeIR-Dual achieves the highest News21 nDCG, Core17 MAP, average score, and average p-MRR without any fine-tuning.}}{7}{table.caption.5}\protected@file@percent }
+\newlabel{tab:followir-background}{{1}{7}{Performance of existing retrieval methods and DeIR-Dual on the FollowIR benchmark \cite {followir2024}. All metrics are percentages ($\times 100$). DeIR-Dual achieves the highest News21 nDCG, Core17 MAP, average score, and average p-MRR without any fine-tuning}{table.caption.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Comparison of DeIR-Dual{} with ten query rewriting methods on the FollowIR benchmark. DeIR-Dual{} achieves the highest mean p-MRR (14.9) and Score (29.0), outperforming all baselines by 10.6$\times $ in p-MRR (vs.\ HyDE) and 50.6$\times $ (vs.\ DeepRetrieval). All metrics are percentages ($\times 100$).}}{7}{table.caption.6}\protected@file@percent }
+\newlabel{tab:followir-main}{{2}{7}{Comparison of \method {} with ten query rewriting methods on the FollowIR benchmark. \method {} achieves the highest mean p-MRR (14.9) and Score (29.0), outperforming all baselines by 10.6$\times $ in p-MRR (vs.\ HyDE) and 50.6$\times $ (vs.\^^MDeepRetrieval). All metrics are percentages ($\times 100$)}{table.caption.6}{}}
 \@writefile{toc}{\contentsline {section}{\numberline {5}Experiments}{7}{section.5}\protected@file@percent }
 \newlabel{sec:experiments}{{5}{7}{Experiments}{section.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Main Results: FollowIR Benchmark}{7}{subsection.5.1}\protected@file@percent }
-\newlabel{sec:main-results}{{5.1}{7}{Main Results: FollowIR Benchmark}{subsection.5.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Cross-Dataset Validation}{7}{subsection.5.2}\protected@file@percent }
-\newlabel{sec:cross-dataset}{{5.2}{7}{Cross-Dataset Validation}{subsection.5.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}BEIR Generalization}{7}{subsection.5.3}\protected@file@percent }
-\newlabel{sec:beir-generalization}{{5.3}{7}{BEIR Generalization}{subsection.5.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}FollowIR Benchmark Background}{7}{subsection.5.1}\protected@file@percent }
+\newlabel{sec:followir-background}{{5.1}{7}{FollowIR Benchmark Background}{subsection.5.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Main Results: FollowIR Benchmark}{7}{subsection.5.2}\protected@file@percent }
+\newlabel{sec:main-results}{{5.2}{7}{Main Results: FollowIR Benchmark}{subsection.5.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Cross-Dataset Validation}{7}{subsection.5.3}\protected@file@percent }
+\newlabel{sec:cross-dataset}{{5.3}{7}{Cross-Dataset Validation}{subsection.5.3}{}}
 \bibstyle{plain}
 \bibdata{../refs/references}
-\bibcite{tart2022}{1}
-\bibcite{gao2023hyde}{2}
-\bibcite{groeneveld2024}{3}
-\bibcite{karpukhin2020dpr}{4}
-\bibcite{followir2024}{5}
-\bibcite{li2025deepretrieval}{6}
-\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Distribution of $\cos (\mathbf  {h}_{\text  {base}}, \mathbf  {h}_{\text  {neg}})$ across three scenarios. NegConstraint shows orthogonality (penalty effective), while ComLQ (structural entanglement) and NQ (generative entanglement) exhibit significant overlap, causing penalty failure.}}{8}{figure.caption.8}\protected@file@percent }
-\newlabel{fig:semantic-entanglement}{{2}{8}{Distribution of $\cos (\mathbf {h}_{\text {base}}, \mathbf {h}_{\text {neg}})$ across three scenarios. NegConstraint shows orthogonality (penalty effective), while ComLQ (structural entanglement) and NQ (generative entanglement) exhibit significant overlap, causing penalty failure}{figure.caption.8}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Ablation Study}{8}{subsection.5.4}\protected@file@percent }
-\newlabel{sec:ablation}{{5.4}{8}{Ablation Study}{subsection.5.4}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Encoder-Agnostic Analysis}{8}{subsection.5.5}\protected@file@percent }
-\newlabel{sec:encoder-agnostic}{{5.5}{8}{Encoder-Agnostic Analysis}{subsection.5.5}{}}
+\bibcite{amati2002dfr}{1}
+\bibcite{tart2022}{2}
+\bibcite{conneau2018wordtranslation}{3}
+\bibcite{gao2023hyde}{4}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Distribution of $\cos (\mathbf  {h}_{\text  {base}}, \mathbf  {h}_{\text  {neg}})$ across three scenarios. NegConstraint shows orthogonality (penalty effective), while ComLQ (structural entanglement) and NQ (generative entanglement) exhibit significant overlap, causing penalty failure.}}{8}{figure.caption.7}\protected@file@percent }
+\newlabel{fig:semantic-entanglement}{{2}{8}{Distribution of $\cos (\mathbf {h}_{\text {base}}, \mathbf {h}_{\text {neg}})$ across three scenarios. NegConstraint shows orthogonality (penalty effective), while ComLQ (structural entanglement) and NQ (generative entanglement) exhibit significant overlap, causing penalty failure}{figure.caption.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}BEIR Generalization}{8}{subsection.5.4}\protected@file@percent }
+\newlabel{sec:beir-generalization}{{5.4}{8}{BEIR Generalization}{subsection.5.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Ablation Study}{8}{subsection.5.5}\protected@file@percent }
+\newlabel{sec:ablation}{{5.5}{8}{Ablation Study}{subsection.5.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.6}Encoder-Agnostic Analysis}{8}{subsection.5.6}\protected@file@percent }
+\newlabel{sec:encoder-agnostic}{{5.6}{8}{Encoder-Agnostic Analysis}{subsection.5.6}{}}
 \@writefile{toc}{\contentsline {section}{\numberline {6}Analysis: Semantic Entanglement}{8}{section.6}\protected@file@percent }
 \newlabel{sec:analysis}{{6}{8}{Analysis: Semantic Entanglement}{section.6}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Definition and Variants}{8}{subsection.6.1}\protected@file@percent }
@@ -121,25 +130,30 @@
 \newlabel{sec:entanglement-diagnosis}{{6.2}{8}{Diagnostic Analysis}{subsection.6.2}{}}
 \@writefile{toc}{\contentsline {section}{\numberline {7}Conclusion and Limitations}{8}{section.7}\protected@file@percent }
 \newlabel{sec:conclusion}{{7}{8}{Conclusion and Limitations}{section.7}{}}
-\bibcite{ma2023ragqr}{7}
-\bibcite{gritlm2024}{8}
-\bibcite{mteb2022}{9}
-\bibcite{instructgpt2022}{10}
-\bibcite{raudaschl2024ragfusion}{11}
-\bibcite{t02022}{12}
-\bibcite{instructor2022}{13}
-\bibcite{coconeg2024}{14}
-\bibcite{deo2024}{15}
-\bibcite{deo2026}{16}
-\bibcite{followtable2026}{17}
-\bibcite{beir2021}{18}
-\bibcite{llama2023}{19}
-\bibcite{e5mistral2023}{20}
-\bibcite{wang2023query2doc}{21}
-\bibcite{flan2022}{22}
-\bibcite{weller2024promptriever}{23}
-\bibcite{bge2023}{24}
-\bibcite{negclip2022}{25}
-\bibcite{dualview2026}{26}
-\bibcite{zhuang2025infir}{27}
+\bibcite{groeneveld2024}{5}
+\bibcite{guo2017temperature}{6}
+\bibcite{followir2024}{7}
+\bibcite{li2025deepretrieval}{8}
+\bibcite{ma2023ragqr}{9}
+\bibcite{gritlm2024}{10}
+\bibcite{mteb2022}{11}
+\bibcite{instructgpt2022}{12}
+\bibcite{platt1999probabilistic}{13}
+\bibcite{raudaschl2024ragfusion}{14}
+\bibcite{t02022}{15}
+\bibcite{instructor2022}{16}
+\bibcite{coconeg2024}{17}
+\bibcite{deo2024}{18}
+\bibcite{deo2026}{19}
+\bibcite{followtable2026}{20}
+\bibcite{beir2021}{21}
+\bibcite{llama2023}{22}
+\bibcite{e5mistral2023}{23}
+\bibcite{wang2023query2doc}{24}
+\bibcite{flan2022}{25}
+\bibcite{weller2024promptriever}{26}
+\bibcite{bge2023}{27}
+\bibcite{negclip2022}{28}
+\bibcite{dualview2026}{29}
+\bibcite{zhuang2025infir}{30}
 \gdef \@abspage@last{10}

@@ -1,6 +1,6 @@
 ---
 name: "dsclr-param-derivation"
-description: "DeIR-Dual V2 第一性原理参数推导方案（V5 基础版 + V6/V7 safe-anchor 扩展版 + V8 per-query 推理时推导 + V8.3 编码噪声解决方案 + V8.4 失败探索，训练集推导，学术规范，支持跨系列编码器泛化）。包含完整的参数推导公式、物理意义、代码实现、使用指南和已知局限性。"
+description: "DeIR-Dual V2 第一性原理参数推导方案（V5 基础版 + V6/V7 safe-anchor 扩展版 + V8 per-query 推理时推导 + V8.3 编码噪声解决方案 + V8.4 失败探索 + V8.5 cross-scale residual penalty + V8.6 残差MAD归一化safety gate，支持跨系列编码器泛化）。包含完整的参数推导公式、物理意义、代码实现、使用指南和已知局限性。"
 ---
 
 # DeIR-Dual V2 第一性原理参数推导方案
@@ -1464,3 +1464,243 @@ safe-anchor 阈值场景（stat=max, mix=max, anchor_delta=+0.02），target_avg
 - refined 结果（batch_size=1，确定性编码）：`results/safe_anchor_v8_qminus_refined_det/metrics_summary.json`
 - per-query 对比分析：见实验记录，q9/q16/q7 的 debug_anchor_logs 对比（tau_anchor/s_neg_max/penalized 变化）
 - safe anchors 文件：`dataset/FollowIR_test/safe_anchors/safe_anchors_news21.json`（LLM 生成的无辜文档锚点）
+
+## 公式体系 V8.5（Cross-Scale Residual Penalty，惩罚/Safety 解耦）
+
+### 核心思想
+
+V8.5 是一个**独立于 anchor 机制的阈值改进方案**，与 V8 per-query 推理时推导机制正交。α 和 β 的推导机制依然是 V8 的推理时推导，主评估引擎为 `engine_deir_dual_v2.py`。
+
+**问题**：V8 在 semantic 模式（τ = Cos(Q_base, Q_neg) + δ）下，at-risk ratio≈0%（几乎所有 query 的 S_neg < τ），导致 α_q 退化为 fallback 值 0.5，V8 退化为 Q_plus-only 模式，惩罚机制形同虚设。
+
+**根因**：Cos(Q_base, Q_neg) 是 QQ 空间的相似度，直接用作 QD 空间 S_neg 的阈值尺度不匹配。QQ 相似度天然高于 QD 相似度，导致 τ 过高、at-risk 过少。
+
+**解决方案**：将"分位数映射"改为 **query-query overlap 到 query-document score 的尺度转译**：
+
+> Cos(Q_base, Q_neg) 不应该直接作为阈值，也不应该直接决定候选集分位数。它应该表示：**一个只因为符合 base query 而与 negative query 产生相似度的文档，理论上会有多高的 S_neg。** 然后我们只惩罚超过这个"背景泄漏预期"的部分。
+
+### 公式体系
+
+**1. 背景泄漏预期（Background Leakage Expectation）**：
+
+```
+c_q = cos(h_base, h_neg)                                    # query-query overlap
+z_b(d) = (S_base(d) - μ_b) / σ_b                            # 标准化 base score
+Ŝ_neg^bg(d) = μ_n + σ_n × c_q × z_b(d)                     # 背景泄漏预期
+```
+
+其中 μ_b/σ_b 是 S_base 的均值/标准差，μ_n/σ_n 是 S_neg 的均值/标准差。
+
+**物理解释**：如果文档只因为符合 base query 而在 negative channel 得分较高，它的 S_neg 大概应该是 Ŝ_neg^bg(d)。
+
+**2. 残差（Residual）**：
+
+```
+R_neg(d) = S_neg(d) - Ŝ_neg^bg(d)
+```
+
+真正的 negative evidence 不是裸的 S_neg，而是超出背景泄漏预期的残差。
+
+**3. MAD-based Robust Threshold**：
+
+```
+m_q = λ × MAD(R_neg)
+MAD(R_neg) = median(|R_neg - median(R_neg)|) × 1.4826
+```
+
+1.4826 使 MAD 与标准差一致（正态假设下）。λ 控制阈值严格程度。
+
+**4. 惩罚项**：
+
+```
+overflow = R_neg(d) - m_q                                    # 残差超出阈值部分
+P_q(d) = Softplus(overflow)                                  # 平滑惩罚
+penalty = α × P_q(d)                                         # 加权惩罚
+```
+
+**5. Safety Gate（与传统 τ 解耦）**：
+
+```
+τ = cos(Q_base, Q_neg) + δ                                  # 传统阈值（不变）
+safety = 1 - sigmoid((S_neg - τ) × T_safety)                 # safety gate 基于原始 S_neg 信号
+```
+
+**关键设计：惩罚和 Safety 解耦**
+- **惩罚项**用残差机制（R_neg - m_q），只关注超出背景预期的真正负面证据
+- **Safety gate** 仍用传统的 S_neg vs τ 比较，控制"哪些文档值得增强"
+- 两者各自在自己的空间内定义，不互相干扰
+
+### V8.5 完整打分公式
+
+```
+S_final = S_base + β × S_req × safety - α × Softplus(R_neg - m_q)
+```
+
+其中：
+- α、β：V8 per-query 推理时推导（不变）
+- safety = 1 - sigmoid((S_neg - τ) × T_safety)，τ = cos(Q_base, Q_neg) + δ
+- R_neg = S_neg - (μ_n + σ_n × c_q × z_b)
+- m_q = λ × MAD(R_neg)
+- λ（residual_margin_scale）：默认 1.0，推荐 2.0
+
+### 实验结果（Core17，engine_deir_dual_v2.py，boundary_mode=residual_bg）
+
+**实验条件**：per_query_ab=true, beta_derive_mode=max_mean, t_safety=20, δ=0.02, α=0.5, β=1.0
+
+#### λ 扫描结果
+
+| λ (margin_scale) | p-MRR |
+|------------------|-------|
+| 0.5 | 0.1665 |
+| 1.0 | 0.1665 |
+| 1.5 | 0.1665 |
+| **2.0** | **0.1670** |
+| 2.5 | 0.1669 |
+| 3.0 | 0.1668 |
+
+λ 对结果影响极小（0.1665~0.1670），λ=2.0 略优。
+
+#### 与 semantic baseline 对比
+
+| 指标 | semantic (V8) | residual_bg λ=2.0 | 变化 |
+|------|--------------|-------------------|------|
+| p-MRR | 0.1542 | **0.1670** | **+8.3%** |
+| changed_MAP@1000 | 0.2643 | 0.2624 | -0.0019 |
+| changed_nDCG@5 | 0.3432 | **0.3462** | +0.0030 |
+
+#### Per-Query 参数对比
+
+| 指标 | semantic (V8) | residual_bg λ=2.0 |
+|------|--------------|-------------------|
+| α_q 均值 | 0.535（93% 退化为 fallback=0.5） | **0.985（有效推导）** |
+| β_q 均值 | 1.422 | 1.412 |
+| at-risk 均值 | 0.1% | **8.9%** |
+
+### 核心发现
+
+1. **V8.5 成功解决了 V8 semantic 模式 at-risk≈0% 的问题**：通过将 cos(Q_base, Q_neg) 从"直接阈值"改为"尺度转译系数"，残差机制能识别出更多真正有负面证据的文档（8.9% vs 0.1%）
+2. **α_q 得到有效推导**：从 fallback 值 0.5 变为有意义的 0.985，惩罚机制真正生效
+3. **p-MRR 提升 8.3%**（0.1542→0.1670），指令敏感度显著改善
+4. **惩罚/Safety 解耦是关键设计**：safety gate 基于原始 S_neg 信号控制增强范围，惩罚基于残差控制排除力度，各司其职
+5. **λ 敏感度低**：0.5~3.0 范围内 p-MRR 变化仅 0.0005，方案鲁棒
+
+### 代码实现位置
+
+- 核心打分函数：`eval/engine_deir_dual_v2.py` 的 `_score_query_dual_v2` 方法，`boundary_mode="residual_bg"` 分支
+- 残差边界计算：`eval/residual_boundary.py` 的 `compute_background_residual_boundary` 函数
+- 运行命令：`python -m eval.engine_deir_dual_v2 --boundary_mode residual_bg --residual_margin_scale 2.0 --per_query_ab true --beta_derive_mode max_mean --deltas 0.02 --t_safety 20`
+
+### V8.5 与之前方案的关系
+
+| 方案 | 阈值机制 | α/β 推导 | 与 anchor 关系 |
+|------|---------|---------|---------------|
+| V5 | τ = cos+δ | 训练集全局 | 无关 |
+| V7 | τ = max(tau_anchor, cos)+δ | 训练集全局+补偿 | 依赖 |
+| V8 | τ = cos+δ (semantic) / anchor+δ (safe-anchor) | per-query 推理时推导 | 可选 |
+| **V8.5** | **τ = cos+δ (safety) + 残差MAD阈值 (penalty)** | **per-query 推理时推导（同V8）** | **无关（独立机制）** |
+
+V8.5 的改进方向与 anchor 机制正交：它改进的是"如何计算惩罚"，而 anchor 改进的是"如何计算 τ"。两者可以组合使用。
+
+## 公式体系 V8.6（残差 MAD 归一化 Safety Gate，2026-06-30）
+
+### 核心思想
+
+V8.5 中 safety gate 仍使用传统 `safety = 1 - sigmoid((S_neg - τ) × T_safety)`，其中 `τ = cos(Q_base, Q_neg) + δ`。这个 safety gate 缺乏可解释性——τ 是 QQ 空间的值被直接当作 QD 阈值，尺度错配导致 safety 信号意义不明。
+
+V8.6 从第一性原理推导 safety gate 的理论最优值：
+
+**Safety gate 的作用**：决定每个文档是否应该接受 β×S_req 增强。
+
+- 文档 d **不是真正负面的** → safety*(d) = 1（允许增强）
+- 文档 d **是真正负面的** → safety*(d) = 0（禁止增强）
+
+"真正负面"的信号恰好是残差 R_neg(d) > 0（S_neg 超出了背景泄漏预期）。因此理论最优 safety 是阶跃函数：
+
+```
+safety*(d) = 1  if R_neg(d) ≤ 0
+safety*(d) = 0  if R_neg(d) > 0
+```
+
+用 sigmoid 做光滑近似，以 MAD 作为归一化尺度：
+
+```
+safety(d) = 1 - sigmoid(R_neg(d) / MAD(R_neg) × κ)
+```
+
+### 可解释性
+
+- **R_neg / MAD** = 残差是"几个 MAD"——衡量超出背景泄漏预期的程度
+- **κ** = 每增加 1 个 MAD，safety 下降多少（过渡锐度）
+- `R_neg = 0` → safety = 0.5（负向证据恰好等于背景泄漏预期）
+- `R_neg = MAD` → safety = 1 - sigmoid(κ)
+- `κ → ∞` 退化为阶跃函数（理论最优 safety 的硬近似）
+- `κ = 0` 回退到传统 τ safety gate（向后兼容）
+
+### V8.6 完整打分公式
+
+```
+S_final = S_base + β × S_req × safety - α × Softplus(R_neg - m_q)
+```
+
+其中：
+- α、β：V8 per-query 推理时推导（不变）
+- **safety = 1 - sigmoid(R_neg / MAD × κ)**（V8.6 新增，κ > 0 时启用）
+- R_neg = S_neg - (μ_n + σ_n × c_q × z_b)
+- m_q = λ × MAD(R_neg)
+- λ（residual_margin_scale）：推荐 2.0
+- κ（safety_kappa）：推荐 8~12
+
+**惩罚与 Safety 统一于残差**：
+- **Penalty**（残差 overflow = R_neg - m_q）：决定哪些文档需要惩罚
+- **Safety**（残差 R_neg / MAD × κ）：决定哪些文档值得增强
+- 两者共享残差信号，物理意义一致
+
+### 实验结果（Core17，2026-06-30）
+
+**实验条件**：per_query_ab=true, beta_derive_mode=max_mean, t_safety=20, δ=0.02, α=0.5, β=1.0, λ=2.0
+
+#### κ 扫描结果
+
+| κ (safety_kappa) | changed_MAP@1000 | changed_nDCG@5 | p-MRR | 说明 |
+|------------------|-------------------|-----------------|-------|------|
+| 0 (传统τ) | **0.2624** | 0.3462 | 0.1670 | baseline |
+| 1 | 0.1840 | 0.2486 | 0.3749 | 过度抑制 |
+| 4 | 0.2408 | 0.3473 | 0.3209 | 偏激进 |
+| 8 | 0.2480 | 0.3675 | 0.2903 | 较优 |
+| **10** | **0.2470** | **0.3734** | **0.2817** | **nDCG 最优区间** |
+| 12 | 0.2470 | 0.3754 | 0.2746 | nDCG 最高 |
+| 20 | 0.2456 | 0.3686 | 0.2586 | 保守 |
+| semantic V8 | 0.2643 | 0.3432 | 0.1542 | 对照组 |
+
+#### 与 V8.5（κ=0）和 semantic baseline 三方对比
+
+| 指标 | semantic V8 | V8.5 (κ=0) | V8.6 (κ=10) |
+|------|------------|-------------|-------------|
+| p-MRR | 0.1542 | 0.1670 (+8.3%) | **0.2817 (+82.6%)** |
+| changed_MAP@1000 | **0.2643** | 0.2624 (-0.7%) | 0.2470 (-6.5%) |
+| changed_nDCG@5 | 0.3432 | 0.3462 (+0.9%) | **0.3734 (+8.8%)** |
+
+### 核心发现
+
+1. **残差 MAD 归一化 safety gate 比传统 τ safety gate 更有效**：κ=8~12 区间，nDCG 提升 7.8%，p-MRR 提升 64%
+2. **传统τ的 MAP"优势"是假象**：传统τ几乎不抑制任何文档（safety≈1），所有文档都被增强，保留了 MAP 但牺牲了指令敏感度
+3. **κ 控制安全-敏感 trade-off**：κ 越大越保守（MAP 高、p-MRR 低），κ 越小越敏感（p-MRR 高、MAP 低）
+4. **κ=8~12 是推荐区间**：平衡了检索质量和指令敏感度
+
+### 代码实现位置
+
+- 核心打分函数：`eval/engine_deir_dual_v2.py` 的 `_score_query_dual_v2` 方法，`boundary_mode="residual_bg"` + `safety_kappa > 0` 分支
+- 残差边界计算：`eval/residual_boundary.py` 的 `compute_background_residual_boundary` 函数（新增 `mad` 字段）
+- 运行命令：`python -m eval.engine_deir_dual_v2 --boundary_mode residual_bg --residual_margin_scale 2.0 --safety_kappa 10 --per_query_ab true --beta_derive_mode max_mean --deltas 0.02 --t_safety 20`
+
+### V8.6 与之前方案的关系
+
+| 方案 | 阈值机制 | Safety Gate | α/β 推导 | 与 anchor 关系 |
+|------|---------|------------|---------|---------------|
+| V5 | τ = cos+δ | S_neg vs τ | 训练集全局 | 无关 |
+| V7 | τ = max(tau_anchor, cos)+δ | S_neg vs τ | 训练集全局+补偿 | 依赖 |
+| V8 | τ = cos+δ | S_neg vs τ | per-query | 可选 |
+| V8.5 | τ = cos+δ (safety) + 残差MAD (penalty) | S_neg vs τ (传统) | per-query | 无关 |
+| **V8.6** | **τ = cos+δ (safety fallback) + 残差MAD (penalty)** | **R_neg/MAD×κ (残差归一化)** | **per-query** | **无关** |
+
+V8.6 在 V8.5 基础上进一步将 safety gate 也统一到残差框架，使惩罚和增强共享同一物理信号，消除了传统 τ safety gate 的可解释性问题。

@@ -40,9 +40,10 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-os.environ.pop("HF_ENDPOINT", None)
-os.environ.pop("HF_HUB_OFFLINE", None)
-os.environ.pop("HF_DATASETS_OFFLINE", None)
+os.environ["HF_HUB_OFFLINE"] = "0"
+os.environ["HF_DATASETS_OFFLINE"] = "0"
+if "HF_ENDPOINT" not in os.environ:
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 import json
 import logging
