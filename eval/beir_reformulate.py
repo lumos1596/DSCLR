@@ -437,6 +437,8 @@ def main():
                         help="Max new tokens for generation (default 256, outputs are short JSON)")
     parser.add_argument("--batch_size", type=int, default=16,
                         help="Batch size for batched generation")
+    parser.add_argument("--custom_queries", type=str, default=None,
+                        help="Path to custom queries JSON file (format: {qid: text, ...})")
 
     args = parser.parse_args()
 
@@ -445,7 +447,13 @@ def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    queries = load_beir_queries(args.dataset)
+    if args.custom_queries:
+        logger.info(f"Loading custom queries from {args.custom_queries}...")
+        with open(args.custom_queries) as f:
+            queries = json.load(f)
+        logger.info(f"Loaded {len(queries)} custom queries")
+    else:
+        queries = load_beir_queries(args.dataset)
 
     if args.filter_qrels:
         hf_name = BEIR_DATASET_MAP.get(args.dataset, args.dataset)

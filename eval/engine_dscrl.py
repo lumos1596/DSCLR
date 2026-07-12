@@ -161,6 +161,9 @@ class DSCLRDenseRetriever:
         self.doc_embeddings = embeddings
         self.doc_ids = doc_ids
         logger.info(f"✅ 文档索引构建完成 (L2 归一化)")
+        
+        import torch as _torch
+        _torch.cuda.empty_cache()
 
     def set_embeddings(
         self,

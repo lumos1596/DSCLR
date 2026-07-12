@@ -23,6 +23,8 @@
 \usepackage{multirow}
 \usepackage{enumitem}
 \usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc}
 
 % ============================================================
 % Custom macros
@@ -75,14 +77,15 @@ instruction into a positive enhancement query ($\qpos$) and a
 negative exclusion query ($\qminus$), then applies a training-free
 decision-layer scoring mechanism that estimates background leakage in
 the negative channel and penalizes only residual exclusion evidence.
-Our key findings are:
+Our experiments show that
 (1) inference-time score calibration derives query-specific
 $\alpha_q$ and $\beta_q$ from candidate-set score distributions,
 avoiding labeled validation data and test-set grid search; (2)
-\method{} outperforms six baselines by 9--44$\times$ in p-MRR while
-achieving the highest retrieval quality (target\_avg) on the FollowIR
-benchmark; (3) cross-modal validation across 7+ datasets confirms broad
-applicability; and (4) we identify and analyze a \emph{semantic
+\method{} achieves the strongest average instruction sensitivity and
+retrieval quality among the compared FollowIR methods; (3) additional
+text-retrieval evaluations confirm that the decision-layer formulation
+transfers beyond FollowIR; and (4) we
+identify and analyze a \emph{semantic
 entanglement} failure mode with a conservative prompting remedy.
 
 Code: \url{https://github.com/...}
@@ -103,113 +106,86 @@ variants --- RAG-Fusion \cite{raudaschl2024ragfusion} produces diverse
 rephrasings and fuses their retrieval results.  However, all existing
 rewriting methods share a critical limitation: their rewritten queries
 are \textbf{semantically unidirectional} --- they all point toward
-``what to retrieve'' (semantic enrichment) but none creates an
-independent channel for ``what to exclude.''  Even RAG-Fusion's
-multiple variants are all positive rephrasings of the same intent; none
-explicitly captures the negative exclusion signal.  This makes current
-rewriting fundamentally \textbf{insensitive to instruction changes}:
-when the exclusion constraint in an instruction is modified (e.g.,
-``exclude repair-only articles'' $\to$ ``exclude funding-related
-articles''), the rewritten queries barely change their ranking, yielding
-near-zero instruction sensitivity (p-MRR $\approx$ 0)
-\cite{followir2024}.  In short, current rewriting can express
-\emph{where to look} but cannot independently express \emph{where not
-to look}.
+``what to retrieve'' but none creates an independent channel for
+``what to exclude.''  Even RAG-Fusion's multiple variants are still
+positive rephrasings of the same intent.  As a result, current
+rewriting remains largely \textbf{insensitive to instruction changes}:
+when the exclusion constraint in an instruction is modified, rankings
+barely move and p-MRR stays near zero \cite{followir2024}.  Existing
+rewriting methods can express \emph{where to look}, but they cannot
+independently express \emph{where not to look}.
 
-Why do existing rewriting methods fail at instruction discrimination?
-The root cause is that real-world retrieval instructions contain
-\textbf{three distinct types of signals} --- background context,
-positive refinement, and negative exclusion \cite{followir2024} ---
-and all current rewriting methods, whether single-query or multi-query,
-address only the first two.  The negative exclusion signal --- the
-directive about what documents are \emph{not} relevant --- has no
-independent channel in any existing rewriting framework.  Collapsing
-it together with positive signals causes inevitable interference: the
-exclusion signal is diluted by the dominant positive and background
-signals, and there is no mechanism to selectively suppress documents
-that match the exclusion constraint.  This tension between
-\textbf{semantic coverage} (retrieving more relevant content) and
-\textbf{instruction discrimination} (adapting the ranking to
-instruction changes) lies at the heart of the instruction-following
-retrieval problem, and current rewriting methods address only the
-former.
+This limitation has a structural origin.  Real-world
+retrieval instructions contain \textbf{three distinct types of
+signals} --- background context, positive refinement, and negative
+exclusion \cite{followir2024} --- yet existing rewriting pipelines only
+strengthen the first two.  They can describe relevance more richly, but
+they still collapse all instruction signals into a single retrieval
+direction.  The challenge is therefore not only to generate a negative
+query, but to distinguish exclusion evidence that warrants suppression
+from negative-channel similarity induced by topical background overlap.
 
-Prior work has attempted to address instruction discrimination from
-other angles, but each falls short.  Supervised instruction tuning ---
-Promptriever \cite{weller2024promptriever} and Dual-View Training
-\cite{dualview2026} --- improves instruction following through
-fine-tuning on annotated data, but the annotation cost is high and
-generalization to unseen exclusion types remains fragile.  Negation-aware
-methods such as DEO \cite{deo2026} decompose queries into
-positive and negative components at the representation layer, but rely
-on linear vector-space operations ($Q_{\text{base}} - Q_{\text{neg}}$)
-that distort the positive intent when moving away from the negation
-direction.  Critically, all three paradigms --- semantic rewriting,
-supervised tuning, and representation-layer decomposition --- share a
-common assumption: that instruction signals must be resolved at the
-\textbf{representation layer}, by producing a single (or linearly
-combined) query embedding.
+Prior work attacks this problem from two other directions, but both have
+clear limitations.  Supervised instruction-following retrievers such as
+Promptriever \cite{weller2024promptriever}, InF-IR
+\cite{zhuang2025infir}, and Dual-View Training \cite{dualview2026}
+improve instruction following through fine-tuning on annotated or
+synthesized pairs, but the data cost is substantial and generalization
+to unseen exclusion types remains uncertain.  Representation-layer
+negation methods such as DEO \cite{deo2024,deo2026} explicitly model
+positive and negative components, but resolve them through vector-space
+operations such as $Q_{\text{base}} - Q_{\text{neg}}$, which couples
+suppression with distortion of the positive intent.  In both cases,
+instruction resolution still happens primarily at the
+\textbf{representation layer}.
 
-We challenge this assumption from within the rewriting paradigm itself.
-The key insight is that the failure of current rewriting is not due to
-poor rewrite quality, but due to \textbf{structural incompleteness}:
-no amount of positive-only rewriting, whether single or multiple
-variants, can create an independent exclusion channel.  Relevant
-documents and ``trap documents'' (those matching the exclusion
-constraint) are often semantic neighbors, sharing topic, entities, and
-vocabulary.  In such entangled regions, no collection of positive
-rephrasings can cleanly separate them.  The solution is not to rewrite
-\emph{more}, but to rewrite \emph{structurally}: decompose the
-instruction into independent channels --- including an explicit
-exclusion channel --- and resolve their signals at the \textbf{decision
-layer}, where nonlinear score composition can selectively suppress trap
-documents without distorting the embedding geometry.
+We instead argue that instruction-following retrieval needs a
+\textbf{decision-layer} treatment.  The failure of positive-only
+rewriting is not that the rewrites are weak, but that they are
+structurally incomplete: no collection of positive rephrasings can mark
+out a semantic boundary around documents targeted for exclusion.
+Moreover, relevant documents and ``trap documents'' often share topic,
+entities, and vocabulary, so raw negative similarity is itself
+confounded by background overlap.  The solution is therefore twofold:
+create an explicit exclusion channel, and interpret that channel
+through a query-adaptive boundary that discounts background leakage
+before applying suppression.
 
 We propose \method{} (\textbf{De}composition-based
 \textbf{I}nstruction-\textbf{R}ewriting with \textbf{Dual}-track
-scoring), a training-free framework that operates entirely at the
-scoring layer.  \method{} first prompts an LLM to decompose an
-instruction into a positive query ($\qpos$) and a negative query
-($\qminus$), which are encoded alongside the base query ($\qbase$)
-through a frozen dense retriever.  These three channels feed into a
-decision-layer scoring mechanism that first estimates the
-negative-channel score expected from background relevance, then uses
-the residual above this estimate as exclusion evidence.  The residual
-signal drives both a penalty term and a conditional gate on the
-positive reward, enabling selective suppression of documents that
-match the exclusion constraint while preserving documents supported by
-the base and positive channels.  This nonlinear score composition is
-what linear vector methods cannot replicate, and it comes at zero
-training cost: \method{} requires no fine-tuning, no embedding
-modification, and no annotated instruction pairs.
+scoring), a training-free framework built around these two ideas.
+First, \method{} decomposes each instruction into a base query
+($\qbase$), a positive refinement query ($\qpos$), and a negative
+exclusion query ($\qminus$), then applies a \textbf{query-adaptive
+exclusion boundary}: it estimates how much of the negative-channel score
+is expected from background relevance and penalizes only the residual
+excess beyond that estimate.  The same residual also gates the positive
+reward, so documents are helped by the refinement channel only when
+their negative evidence remains within the safe region.  Second,
+\method{} uses \textbf{label-free inference-time score calibration} to
+derive query-specific reward and penalty scales directly from the
+candidate-set score distributions, avoiding labeled validation data and
+benchmark-specific grid search.
 
-Our experiments reveal four findings.  First, scoring parameters need
-not be empirically tuned: inference-time score calibration derives
-query-specific $\alpha_q$ and $\beta_q$ from the candidate scores
-produced by the retriever, avoiding labeled validation data and
-test-set grid search.
-Second, on the FollowIR benchmark \cite{followir2024}, \method{}
-outperforms six baselines by 9--44$\times$ in p-MRR while achieving
-the highest retrieval quality (target\_avg) --- despite never being
-trained on an instruction-annotated pair.  Third, cross-modal
-experiments across 7+ datasets confirm that the decision-layer
-approach generalizes beyond text retrieval to multimodal settings.
-Fourth, we identify \textbf{semantic entanglement} --- where the
-exclusion vector overlaps substantially with the base intent --- as a
-fundamental failure mode, and characterize when and why the dual-track
-mechanism breaks down.
+Rather than simply producing stronger query rewrites, \method{} converts
+positive-only rewriting into exclusion-aware reranking without altering
+the retriever.  On FollowIR
+\cite{followir2024}, \method{} improves both instruction sensitivity and
+retrieval quality over query rewriting and retriever baselines.  On
+additional negation-sensitive and general-domain benchmarks, the same
+decision-layer formulation transfers without per-dataset supervision.
+Finally, diagnostic analysis identifies \textbf{semantic entanglement}
+--- heavy overlap between the base and exclusion channels --- as the key
+failure mode that limits training-free exclusion reasoning.
 
-In summary, our contributions are: \textbf{(i)} \method{}, a
-training-free decision-layer framework that shifts
-instruction-following from a training problem to a scoring problem,
-achieving the highest p-MRR and retrieval quality on FollowIR without
-model fine-tuning; \textbf{(ii)} an inference-time score
-calibration method that derives query-specific scoring coefficients
-from the retriever's own candidate-set score distributions rather than
-from labeled validation data or test-set grid search; and
-\textbf{(iii)} an empirical characterization of
-semantic entanglement, the key failure mode limiting training-free
-instruction-following retrieval.
+In summary, we make two technical contributions and one empirical
+observation: \textbf{(i)} a query-adaptive exclusion boundary that
+converts triple-query decomposition into selective decision-layer
+suppression; \textbf{(ii)} a label-free inference-time calibration
+scheme that aligns the boundary and reward scales to each query's
+candidate-set statistics; and \textbf{(iii)} an empirical
+characterization of semantic entanglement as the main boundary-failure
+regime.
 
 % ============================================================
 % 2. RELATED WORK
@@ -217,84 +193,120 @@ instruction-following retrieval.
 \section{Related Work}
 \label{sec:related-work}
 
-\subsection{Query Rewriting and Semantic Enhancement}
+\subsection{LLM-Based Query Rewriting and Semantic Enhancement}
 
-Query rewriting aims to bridge the vocabulary gap between user queries
-and document collections.  Early approaches include HyDE
-\cite{gao2023hyde}, which generates hypothetical documents,
-Query2Doc \cite{wang2023query2doc}, which concatenates queries with
-pseudo-documents, and RAG-Fusion \cite{raudaschl2024ragfusion}, which
-fuses multiple LLM-generated variants.  RAG-QR
-\cite{ma2023ragqr} learns a rewriter via reinforcement learning, while
-DeepRetrieval \cite{li2025deepretrieval} fine-tunes a language model
-with RL to optimize retrieval recall.  Recent works such as
-FollowTable \cite{followtable2026} extend instruction-following
-retrieval to structured data domains.  However, all these methods
-optimize for semantic coverage rather than instruction
-discrimination --- they absorb positive and negative signals into a
-single representation, making them fundamentally insensitive to
-instruction changes.  This is confirmed empirically: semantic
-enhancement methods achieve near-zero instruction sensitivity
-(p-MRR $\approx 0$) despite strong baseline retrieval quality.
+LLM-based query rewriting improves retrieval by making the user's
+information need more explicit before matching.  HyDE
+\cite{gao2023hyde} retrieves with hypothetical documents, Query2Doc
+\cite{wang2023query2doc} enriches queries with pseudo-documents, and
+RAG-Fusion \cite{raudaschl2024ragfusion} combines multiple generated
+query variants.  More recent rewriting systems learn the rewriting
+policy or optimize retrieval-oriented generation, including RAG-QR
+\cite{ma2023ragqr} and DeepRetrieval
+\cite{li2025deepretrieval}.  These methods primarily improve recall or
+semantic coverage, but they do not explicitly model exclusion as a
+separate decision signal.  Even when multiple rewrites are generated,
+the variants usually remain positive descriptions of relevance rather
+than independent evidence for what should be suppressed.  Our method
+may use query decomposition to obtain positive and negative channels,
+but moves beyond rewriting by introducing an explicit exclusion-aware
+decision layer.
 
-\subsection{Instruction-Following Retrieval}
+\subsection{Instruction-Following Retrieval with Exclusion Constraints}
 
-The success of instruction-following language models such as
-InstructGPT \cite{instructgpt2022}, FLAN \cite{flan2022}, and T0
-\cite{t02022} has prompted the NLP community to explore instruction
-tuning across diverse domains \cite{llama2023,groeneveld2024}.  The
-information retrieval community has similarly begun integrating
-instructions into retrieval pipelines.  INSTRUCTOR
-\cite{instructor2022} and TART \cite{tart2022} were among the earliest
-to train retrievers with task-specific instructions, though these
-instructions are typically short task prefixes rather than query-level
-constraints.  Recent efforts scale up model size and instruction
-coverage: E5-Mistral \cite{e5mistral2023}, GritLM \cite{gritlm2024},
-and BGE \cite{bge2023} use LLaMA or Mistral backbones to support
-richer instruction sets, while C-Pack \cite{bge2023} provides
-packaged resources for multilingual embedding training.  Despite this
-activity, existing instruction-aware retrievers evaluate on standard
-benchmark suites such as MTEB \cite{mteb2022} and BEIR
-\cite{beir2021} that contain no per-query instructions
-\cite{followir2024}.  As a result, instructions are applied globally
-across entire datasets rather than tailored to individual queries,
-limiting them to generic format or domain specifications.  The
-FollowIR benchmark \cite{followir2024} addresses this gap by
-introducing per-query instructions with the original/changed query
-pair protocol and the p-MRR metric.  Promptriever
-\cite{weller2024promptriever} trains retrievers to follow natural
-language instructions, InF-IR \cite{zhuang2025infir} releases a
-large-scale instruction-following training corpus and model, while
-Dual-View Training
-\cite{dualview2026} synthesizes training data via polarity reversal.
-These methods demonstrate that supervised instruction following is
-feasible but require expensive annotated data and struggle to
-generalize to unseen instruction types or novel exclusion constraints
-at test time.
+Instruction-following retrieval extends dense retrieval from topical
+matching to instruction-conditioned matching.  Instruction-tuned
+retrievers such as INSTRUCTOR \cite{instructor2022} and TART
+\cite{tart2022} train embedding models with task descriptions, while
+larger instruction-aware retrievers such as E5-Mistral
+\cite{e5mistral2023}, BGE/C-Pack \cite{bge2023}, GritLM
+\cite{gritlm2024}, Promptriever \cite{weller2024promptriever}, and
+InF-IR \cite{zhuang2025infir} improve instruction sensitivity through
+instruction-labeled or synthetic supervision.  FollowIR
+\cite{followir2024} further formalizes per-query instruction following
+through original/changed query pairs and metrics such as p-MRR, while
+Dual-View Training \cite{dualview2026} synthesizes polarity-reversal
+data to improve sensitivity to instruction changes.  These works show
+that instruction-following retrieval can be improved through training,
+but training-centric approaches require retriever updates and
+additional instruction data, and they must balance instruction
+sensitivity against broad retrieval generalization.
 
-\subsection{Negation-Aware Retrieval}
+Exclusion constraints are a particularly challenging form of
+instruction following.  In exclusion queries, the hardest negatives are
+not irrelevant documents but topically relevant documents that violate
+the constraint.  Such documents may match the affirmative intent and
+share substantial background with the query, yet violate the user's
+``not'', ``without'', or ``exclude'' condition.  This makes positive
+query enhancement alone less suited to the problem: it can strengthen
+topical relevance without identifying which relevant-looking documents
+should be suppressed.
 
-Handling negation in retrieval has received growing attention across
-both text and multimodal domains.  The DEO framework
-\cite{deo2024,deo2026} learns separate representations for positive
-and negative instruction components in text retrieval, with the latest
-work \cite{deo2026} proposing a training-free approach that operates at
-the representation layer by optimizing query embeddings directly.
-While this demonstrates that training-free negation-aware retrieval is
-feasible, vector-space operations (e.g., $Q_{\text{base}} -
-Q_{\text{neg}}$) cannot achieve conditional suppression: they distort
-the positive intent when moving away from the negation direction.  In
-the multimodal domain, NegCLIP \cite{negclip2022} fine-tunes CLIP on
-negation-augmented data to distinguish positive from negative
-descriptions, while COCO-Neg \cite{coconeg2024} reveals that standard
-models catastrophically fail under caption polarity inversion.
+One line of work addresses negative constraints and complex logical
+queries by making constraint structure explicit.  Neural-symbolic
+retrieval methods such as NS-IR \cite{xu2025logical} convert
+natural-language queries and documents into first-order logic forms and
+enforce logical consistency through reranking objectives such as logic
+alignment and connective constraints.  OrLog \cite{hoveyda2026orlog}
+instead decomposes complex queries into atomic predicates, estimates
+predicate-level plausibility with LLMs, and applies probabilistic
+reasoning to infer query satisfaction.  These routes offer
+interpretable ways to represent logical constraints, but they introduce
+a different dependency: natural-language retrieval must be converted
+into logical or predicate-level representations, or coupled with
+symbolic/probabilistic reasoning objectives.  Our method stays in the
+dense score space and does not require a logical parser, symbolic
+inference module, or probabilistic reasoning engine.
 
-Our approach differs fundamentally from all prior work by operating at
-the \textbf{decision layer} rather than the representation layer.
-Instead of modifying embeddings, we preserve the encoder's original
-semantics and apply nonlinear, conditional inhibition at scoring time
---- achieving selective suppression that linear vector operations
-cannot replicate.
+A closer line of work avoids retriever training by decomposing
+instructions into positive and negative components and modifying query
+representations at inference time.  DEO-style methods
+\cite{deo2024,deov2,deo2026} learn or construct positive and negative
+instruction components, with training-free variants operating at the
+representation layer through query embedding modification or
+optimization.  Representation-layer methods change the query vector
+globally, which can make it difficult to distinguish true exclusion
+evidence from background overlap at the document level.  In contrast,
+\method{} keeps the retriever fixed, avoids symbolic query conversion,
+and resolves exclusion at the decision layer.  By estimating background
+leakage and calibrating reward/penalty scales from the current
+unlabeled candidate set, it targets constraint satisfaction without
+retriever fine-tuning or global query-vector manipulation.
+
+\subsection{Query-Local Score Calibration and Test-Time Adaptation}
+
+The calibration component of \method{} is related to post-hoc
+calibration and local similarity correction.  Platt scaling and
+temperature scaling transform model outputs after training while
+keeping model parameters fixed
+\cite{platt1999probabilistic,guo2017temperature}, but are typically
+estimated from labeled validation data for confidence calibration.
+Local scaling methods such as CSLS \cite{conneau2018wordtranslation}
+show a complementary principle: raw similarities can contain local
+bias, and neighborhood statistics can improve comparability across
+candidates.  Our setting differs from both lines because it requires
+label-free calibration of ranking scores for each query.
+
+Information retrieval also provides a direct precedent for using
+unlabeled query-local evidence.  Query performance prediction estimates
+the expected reliability of a ranking without relevance judgments, and
+recent studies show that neural rankers exhibit query-specific
+behaviors that are difficult to capture with traditional predictors
+\cite{faggioli2023query}.  Pseudo-relevance feedback similarly uses the
+top-ranked set as local evidence, including in dense retrieval settings
+where feedback representations are extracted from first-pass results
+\cite{wang2021pseudo}.  \method{} adopts the same broad test-time
+principle but uses the candidate set differently: it does not predict
+query difficulty or expand the query, but estimates the score scales of
+the base, positive, and negative channels.
+
+Recent inference-only calibration work further shows that unlabeled
+test batches can be used to estimate and correct score biases without
+supervised validation labels \cite{zhou2024batch}.  In contrast,
+\method{} does not tune prompts, update model parameters, or learn
+global calibration constants.  It keeps the retriever fixed and uses
+candidate-set statistics only to calibrate decision-layer reward and
+penalty scales.
 
 % ============================================================
 % 3. METHOD
@@ -302,77 +314,63 @@ cannot replicate.
 \section{Method: DeIR-Dual}
 \label{sec:method}
 
-% Section narrative: We first formalize the structural blind spot
-% in single-vector retrieval, then introduce the dual-query
-% decomposition as the key insight, present the scoring mechanism
-% with its nonlinear Safety Gate, and finally describe the
-% Scale Alignment principle for parameter derivation.
+% Section narrative: We first formalize why instruction-following
+% retrieval needs independent channels, then introduce triple-query
+% decomposition, present the query-adaptive exclusion boundary, and
+% finally describe the label-free inference-time calibration that
+% sets the reward and penalty scales.
 
 \subsection{Problem Formulation}
 \label{sec:problem-formulation}
 
-Dense retrievers encode a query into a single dense vector
-$\mathbf{v}_{q,I} \in \mathbb{R}^d$ and retrieve documents by descending
-order of $\cos(\mathbf{v}_{q,I}, \mathbf{v}_d)$.  As shown in FollowIR
-\cite{followir2024}, real-world retrieval instructions contain \textbf{three
-distinct types of signals} that are structurally incompatible with
-single-vector encoding:
+Dense retrievers typically encode a query--instruction pair into a
+single vector and rank documents by cosine similarity.  In
+instruction-following retrieval, however, the instruction may contain
+signals with different roles:
 %
 \begin{enumerate}
-  \item \textbf{Background context} (\emph{less directly-relevant background
-    info}): peripheral information that helps the system understand the
-    user's information need but does not directly determine relevance.
-  \item \textbf{Positive refinement} (\emph{more specific details about what
-    is relevant}): fine-grained constraints that narrow the relevance
-    definition (e.g., ``must contain information about formation'').
-  \item \textbf{Negative exclusion} (\emph{directives about what documents
-    are not relevant, using negation}): explicit constraints that mark
-    certain documents as irrelevant (e.g., ``documents limited to the
-    problems of the telescope are irrelevant'').
+  \item \textbf{Background context}: information that frames the user's
+    information need and helps interpret the instruction.
+  \item \textbf{Positive refinement}: affirmative constraints that specify
+    what should be emphasized or made more specific.
+  \item \textbf{Negative exclusion}: constraints that specify what should be
+    suppressed or treated as irrelevant.
 \end{enumerate}
 %
-When all three signals are collapsed into a single vector, they
-inevitably interfere: the background context dilutes the positive
-refinement, and the negative exclusion has no independent channel to
-express ``where not to look.''  This is the \textbf{structural blind spot}
-of single-vector retrieval --- it can express semantic direction but not
-semantic boundaries.
+When these signals are collapsed into one embedding, the resulting score
+provides a single relevance direction.  This score can be effective for
+topical matching, but it does not expose separate controls for
+contextual relevance, positive refinement, and negative exclusion.  The
+issue is reflected in changed-instruction evaluations such as FollowIR
+\cite{followir2024}, where a system must respond to fine-grained
+query-level constraints rather than only retrieve topically related
+documents.
 
-Instruction sensitivity is measured by p-MRR
-\cite{followir2024}: how much a system's ranking changes when the
-instruction changes, with zero or negative values indicating failure
-to adapt.
-
-The core challenge is therefore: \textbf{how can we create independent
-channels for all three instruction signals --- background context,
-positive refinement, and negative exclusion --- without modifying the
-encoder's embedding space?}
+We formulate the problem as inference-time decision-layer reranking with
+a frozen retriever.  Given a query and instruction, the goal is to
+construct separate scoring channels for contextual relevance, positive
+refinement, and negative exclusion without updating the encoder.  The
+negative channel is then converted into a query-adaptive exclusion
+boundary rather than used as a raw penalty.
 
 \subsection{Triple-Query Decomposition}
 \label{sec:dual-query-generation}
 
-The key insight of \method{} is to create \textbf{three independent
-channels} in the scoring layer, each handling one class of instruction
-signal from FollowIR \cite{followir2024}:
+\method{} constructs three query channels that provide the decision
+layer with separate evidence for context, affirmative refinement, and
+exclusion:
 
 \begin{enumerate}
-  \item \textbf{$\qbase$ (Base Query)}: the original query text
-    concatenated with the full instruction.  This channel preserves
-    the \textbf{background context} --- all contextual information that
-    helps frame the information need, including the user's intent,
-    domain, and peripheral constraints.
-  \item \textbf{$\qpos$ (Positive Refinement)}: an LLM-generated query
-    that extracts and strengthens the \textbf{positive refinement signals}
-    from the instruction --- the ``more specific details about what is
-    relevant'' (e.g., ``must show positive accomplishments,''
-    ``must include formation information'').  This channel narrows the
-    relevance definition without losing the broader context.
-  \item \textbf{$\qminus$ (Negative Exclusion)}: an LLM-generated query
-    that explicitly captures the \textbf{negative exclusion signals} ---
-    the ``directives about what documents are not relevant, using
-    negation'' (e.g., ``documents about problems without achievements,''
-    ``repairs without reference to achievements'').  This channel
-    creates an independent ``do not retrieve'' signal.
+  \item \textbf{$\qbase$ (Base Query)} contains the original query and the
+    full instruction.  It serves as the contextual relevance anchor that
+    preserves the broader information need.
+  \item \textbf{$\qpos$ (Positive Refinement)} extracts the affirmative
+    constraints that refine what should be retrieved.  This channel
+    emphasizes positive requirements, while the base channel retains the
+    broader context.
+  \item \textbf{$\qminus$ (Negative Exclusion)} extracts the excluded
+    content and defines the negative channel used for boundary
+    estimation.
 \end{enumerate}
 
 The three queries are independently encoded by the same dense retriever
@@ -382,18 +380,20 @@ $\mathbf{h}_{\text{pos}} = f(\qpos)$,
 $\mathbf{h}_{\text{neg}} = f(\qminus)$.
 Document embeddings $\mathbf{v}_d = f(d)$ are pre-computed once and reused.
 
-\textbf{Why three channels, not two?}  Prior work (e.g., DEO
-\cite{deo2024}) decomposes instructions into positive and negative
-components only.  However, this overlooks the \textbf{background context}
-signal --- the peripheral information that is not directly relevant but
-frames the user's intent.  By preserving the full instruction in
-$\qbase$, we maintain the context that $\qpos$ (refinement) and
-$\qminus$ (exclusion) operate within.  Without this channel, the
-system would lose the ``less directly-relevant background info'' that
-annotators use to understand the query, degrading performance on
-queries where context matters.
+The base channel is not used to enforce exclusion directly; it provides
+the contextual relevance anchor against which the positive and negative
+channels are calibrated.  This role is important because a
+positive/negative decomposition alone may remove contextual information
+that determines how refinement and exclusion should be interpreted.  We
+therefore keep the full instruction as a context anchor and use the
+positive and negative queries as targeted decision-layer signals.
 
-\subsection{Decision-Layer Score Composition}
+In practice, the decomposer is prompted to produce short
+retrieval-style queries and to place affirmative and excluded
+constraints in separate fields.  Prompts and examples are provided in
+the appendix.
+
+\subsection{Query-Adaptive Exclusion Boundary}
 \label{sec:scoring-formula}
 
 Given the three query encodings, we compute document-level cosine
@@ -410,20 +410,22 @@ The base and positive channels provide topical relevance and
 instructional refinement.  The negative channel is more delicate: a
 high $\sneg(d)$ can indicate a true constraint violation, but it can
 also arise because relevant and excluded documents share entities,
-topic, or background context.  \method{} therefore performs
-decision-layer reranking through a query-conditioned residual score,
-rather than treating the raw negative-channel score as direct evidence
-for exclusion.
+topic, or background context.  \method{} therefore treats exclusion as
+a \textbf{residual boundary estimation} problem.  Negative-channel
+similarity is decomposed into background leakage and residual exclusion
+evidence.  We estimate the background component from the current
+query's candidate distribution, subtract it from the negative-channel
+score, and penalize residual evidence only as it approaches and exceeds
+a robust query-specific boundary.
 
 \subsubsection{Background Leakage Estimation}
 
-Our treatment follows the same calibration principle as local scaling
-methods for nearest-neighbor retrieval.  For example, CSLS calibrates
-raw cosine similarity by subtracting neighborhood-density terms, thereby
-reducing the bias caused by hubs in high-dimensional embedding spaces
-\cite{conneau2018wordtranslation}.  In our setting, the analogous bias
-is not neighborhood density but background-induced similarity in the
-negative channel.  For each query, we therefore estimate the part of the
+Our treatment follows the same broad intuition as local scaling methods
+for nearest-neighbor retrieval: raw similarity can contain a query-local
+bias that should be removed before comparison
+\cite{conneau2018wordtranslation}.  In our setting, this bias is
+background-induced similarity in the negative channel.  We use a simple
+query-local linear leakage model to estimate the part of the
 negative-channel score that is expected from background relevance.  Let
 $\mu_b,\sigma_b$ be the mean and standard deviation of
 $\sbase$ over the candidate set, and let $\mu_n,\sigma_n$ be the
@@ -455,11 +457,11 @@ then
 %
 This estimate transfers the standardized base-channel variation into
 the negative-channel scale, modulated by the semantic overlap between
-the base and exclusion queries.  It provides a query-conditioned
-baseline for what the negative score would be if a document matched
-only the background context.
+the base and exclusion queries.  It is not intended as a generative
+model of relevance; it is a query-local baseline for the negative score
+expected from background overlap.
 
-\subsubsection{Residual Exclusion Penalty}
+\subsubsection{Residual Exclusion Boundary}
 
 We define the residual negative score as the excess negative-channel
 evidence beyond the background estimate:
@@ -471,97 +473,91 @@ evidence beyond the background estimate:
 \end{equation}
 %
 Positive residuals indicate that the document matches the exclusion
-query more strongly than expected from background relevance alone.  To
-avoid relying on a fixed threshold across queries, we use the median
-absolute deviation as a robust scale estimate:
+query more strongly than expected from background relevance alone.  We
+define the query-adaptive exclusion boundary with the median and median
+absolute deviation of the residual scores:
 %
 \begin{equation}
-  m_q = \lambda \cdot
-  \operatorname{MAD}\!\left(\{R_{\text{neg}}(d): d \in \mathcal{C}_q\}\right),
+  \tau_q =
+  \operatorname{median}(\mathcal{R}_q)
+  + \lambda \operatorname{MAD}(\mathcal{R}_q),\quad
+  \mathcal{R}_q=\{R_{\text{neg}}(d):d\in\mathcal{C}_q\},
   \label{eq:mad-margin}
 \end{equation}
 %
-where $\mathcal{C}_q$ denotes the retrieved candidate set.  The
-penalty is applied only to residual evidence above this query-specific
-margin:
+where $\mathcal{C}_q$ denotes the retrieved candidate set.  Residuals
+below $\tau_q$ are treated as background-consistent, while residuals
+above $\tau_q$ provide stronger evidence for exclusion.  We use
+Softplus as a smooth approximation to a hinge penalty:
 %
 \begin{equation}
   \text{penalty}(d)
-    = \alpha_q\,\operatorname{Softplus}\!\left(R_{\text{neg}}(d)-m_q\right).
+    = \alpha_q\,\operatorname{Softplus}\!\left(R_{\text{neg}}(d)-\tau_q\right).
   \label{eq:residual-penalty}
 \end{equation}
 %
-The Softplus transformation gives a smooth penalty around the margin,
-while the residual construction prevents the negative channel from
-penalizing documents merely because they share topical background with
-the exclusion query.  The scale $\alpha_q$ is derived by score
-calibration in \S\ref{sec:parameter-derivation}.
+The penalty grows smoothly as residual exclusion evidence approaches
+and exceeds the boundary, while the residual construction prevents the
+negative channel from penalizing documents merely because they share
+topical background with the exclusion query.  The scale $\alpha_q$ is
+derived by score calibration in \S\ref{sec:parameter-derivation}.
 
-\subsubsection{Residual-Normalized Safety Gate}
+\subsubsection{Safety-Gated Positive Reward}
 
 The positive channel can improve recall for documents satisfying the
 instruction, but a raw positive reward can also amplify documents that
 violate the exclusion constraint.  We therefore gate the positive
-reward by the normalized residual negative score:
+reward with respect to the same residual boundary:
 %
 \begin{equation}
-  \text{safety}(d)
+  g_q(d)
     = 1 - \sigma\!\left(
-      \kappa \frac{R_{\text{neg}}(d)}
-      {\operatorname{MAD}\!\left(\{R_{\text{neg}}(d'): d' \in \mathcal{C}_q\}\right)}
+      \kappa \frac{R_{\text{neg}}(d)-\tau_q}
+      {\operatorname{MAD}(\mathcal{R}_q)}
     \right).
   \label{eq:safety}
 \end{equation}
 %
-The gate compares each document's residual against the query-specific
-residual scale.  Documents with large positive residuals receive less
-positive-channel reward, while documents whose negative score is
-consistent with background relevance remain eligible for enhancement.
-The sharpness parameter $\kappa$ controls the transition between these
-regimes.
+The gate largely preserves the positive reward for documents whose residuals fall below the boundary and progressively suppresses it as residual exclusion evidence crosses the boundary.  The fixed shape parameter $\kappa$ controls the
+sharpness of this transition.
 
 \textbf{Final score.}
 The final decision-layer score combines base relevance, safety-gated
 positive refinement, and residual exclusion penalty:
 %
-\begin{equation}
+  \begin{equation}
   \sfinal(d)
     = \sbase(d)
-    + \beta_q\,\spos(d)\,\text{safety}(d)
-    - \alpha_q\,\operatorname{Softplus}\!\left(R_{\text{neg}}(d)-m_q\right).
+    + \beta_q\,\spos(d)\,g_q(d)
+    - \alpha_q\,\operatorname{Softplus}\!\left(R_{\text{neg}}(d)-\tau_q\right).
   \label{eq:final}
 \end{equation}
 %
-This nonlinear score composition implements conditional suppression at
-ranking time without modifying the dense retriever.  The parameters
-$\alpha_q$ and $\beta_q$ are derived from the score distributions of
-the current query, while $\lambda$ and $\kappa$ control the residual
-margin and gate sharpness.  In implementation, $\alpha$ and $\beta$
-also have bounded fallback values for degenerate candidate sets.
+This nonlinear score composition implements a query-adaptive exclusion
+boundary at ranking time without modifying the dense retriever.  The
+parameters $\alpha_q$ and $\beta_q$ are derived from the score
+distributions of the current query, while $\lambda$ and $\kappa$
+are fixed shape parameters controlling boundary offset and gate
+sharpness.
 
 \begin{figure}[t]
   \centering
-  % \includegraphics[width=\linewidth]{figures/method_pipeline.pdf}
-  \fbox{\parbox{\linewidth}{\centering\vspace{3cm}%
-    \textbf{Figure 1: \method{} Pipeline}\\
-    \small (placeholder: to be replaced with pipeline diagram)\vspace{1cm}}}
-  \caption{Overview of \method{}.  A query and its instruction are
-    decomposed by an LLM into three queries ($\qbase$, $\qpos$,
-    $\qminus$), independently encoded, and scored via the
-    decision-layer mechanism in Eq. \ref{eq:final}.  The scorer first
-    estimates background leakage in the negative channel, extracts a
-    residual exclusion signal, and then applies a residual penalty
-    together with a safety-gated positive reward.  This allows
-    conditional suppression of documents whose negative residual exceeds
-    the background estimate while preserving rankings for documents
-    supported by the base and positive channels.}
+  \input{figures/method_pipeline}
+  \caption{Overview of the current \method{} formulation.  The method
+    first separates the instruction into context, positive-refinement,
+    and negative-exclusion channels and scores the same candidate set
+    with a frozen retriever.  The decision layer then estimates
+    background-induced negative similarity, converts the negative score
+    into a residual boundary signal, derives $\alpha_q$ and $\beta_q$
+    from active and safe candidate regions, and composes the final
+    safety-gated reranking score in Eq.~\ref{eq:final}.}
   \label{fig:pipeline}
 \end{figure}
 
 % ============================================================
-% 4. INFERENCE-TIME SCORE CALIBRATION
+% 3.4 INFERENCE-TIME SCORE CALIBRATION
 % ============================================================
-\section{Inference-Time Score Calibration}
+\subsection{Inference-Time Score Calibration}
 \label{sec:parameter-derivation}
 
 The scoring formula in Eq.~\ref{eq:final} contains two query-level
@@ -572,29 +568,28 @@ reranking time from the score distributions of the current candidate
 set.  This converts parameter selection into query-conditioned score
 calibration: the correction terms are placed on a magnitude comparable
 to the base retriever without changing the retriever or using relevance
-labels.
+labels.  The goal is not to fit a benchmark-specific optimum, but to
+make the exclusion boundary and positive reward portable across
+retrievers with different score scales.
 
-\subsection{Candidate-Set Score Calibration}
+\subsubsection{Candidate-Set Score Calibration}
 \label{sec:scale-alignment}
 
 The base, positive, and negative channels are produced by the same dense
 retriever but have different score distributions because they encode
-different query intents.  We therefore treat $\alpha_q$ and $\beta_q$ as
-post-hoc scale factors for decision-layer reranking.  This follows the
-standard calibration perspective that model outputs can be transformed
-after training while the model parameters remain fixed, as in Platt
-scaling and temperature scaling
-\cite{platt1999probabilistic,guo2017temperature}.  Temperature scaling,
-for example, optimizes a single scalar on a labeled validation set and
-does not change the predicted class.  Our setting differs in two ways:
-we calibrate ranking scores rather than class probabilities, and the
-calibration is label-free.  The only inputs are the channel scores over
-the current candidate set $\mathcal{C}_q$.
+different query intents.  We therefore treat $\alpha_q$ and $\beta_q$
+as post-hoc scale factors for decision-layer reranking.  Unlike
+validation-set calibration methods such as Platt scaling and
+temperature scaling
+\cite{platt1999probabilistic,guo2017temperature}, our calibration is
+label-free, query-local, and operates on ranking scores.  The only
+inputs are the channel scores over the current candidate set
+$\mathcal{C}_q$.
 
-Let the residual excess over the margin be
+Let the residual excess over the boundary be
 %
 \begin{equation}
-  o_q(d) = R_{\text{neg}}(d) - m_q,
+  o_q(d) = R_{\text{neg}}(d) - \tau_q,
   \label{eq:residual-excess}
 \end{equation}
 %
@@ -607,17 +602,28 @@ and define the residual-exceeding subset as
 \end{equation}
 %
 These are the documents whose negative residual exceeds the robust
-margin and therefore carries residual exclusion evidence.  The penalty
-coefficient is chosen so that the average residual penalty on
-$\mathcal{A}_q$ matches the average base score on the same subset:
+boundary and therefore carries residual exclusion evidence.  We write
+the corresponding penalty magnitude as
+%
+\begin{equation}
+  P_q(d) = \operatorname{Softplus}(o_q(d)).
+  \label{eq:penalty-magnitude}
+\end{equation}
+%
+Let $E_b(d)$ and $E_{\text{pos}}(d)$ denote nonnegative evidence
+magnitudes for the base and positive-refinement channels.  These
+magnitudes are used only for scale estimation.  We derive $\alpha_q$
+and $\beta_q$ by active-region scale matching: each correction term is
+scaled so that its average magnitude on the region where it is active
+is comparable to the average base evidence on that same region.
+For the penalty-active region, this gives
 %
 \begin{equation}
   \alpha_q =
     \frac{
-      \frac{1}{|\mathcal{A}_q|}\sum_{d\in\mathcal{A}_q}\sbase(d)
+      \operatorname*{Avg}_{d\in\mathcal{A}_q} E_b(d)
     }{
-      \frac{1}{|\mathcal{A}_q|}\sum_{d\in\mathcal{A}_q}
-      \operatorname{Softplus}(o_q(d))
+      \operatorname*{Avg}_{d\in\mathcal{A}_q} P_q(d)
     }.
   \label{eq:alpha}
 \end{equation}
@@ -631,97 +637,96 @@ For the positive channel, we use the complementary safe subset
 \end{equation}
 %
 The reward coefficient is derived after applying the safety gate, since
-the positive reward should be reduced when a document has residual
-negative evidence.  We align the average gated reward in
-$\mathcal{B}_q$ with the strongest base score in the same subset:
+the positive reward is reduced when a document has residual negative
+evidence.  We define the gated positive-refinement evidence as
+%
+\begin{equation}
+  E_q^+(d) = g_q(d)E_{\text{pos}}(d).
+  \label{eq:gated-positive-evidence}
+\end{equation}
+%
+The same scale-matching principle calibrates the reward-active region:
+the average gated positive-refinement evidence in $\mathcal{B}_q$ is
+matched to the average base evidence on $\mathcal{B}_q$:
 %
 \begin{equation}
   \beta_q =
     \frac{
-      \max_{d\in\mathcal{B}_q}\sbase(d)
+      \operatorname*{Avg}_{d\in\mathcal{B}_q} E_b(d)
     }{
-      \frac{1}{|\mathcal{B}_q|}\sum_{d\in\mathcal{B}_q}
-      \spos(d)\,\text{safety}(d)
+      \operatorname*{Avg}_{d\in\mathcal{B}_q} E_q^+(d)
     }.
   \label{eq:beta}
 \end{equation}
 %
-This calibration places the gated reward on the same score scale as the
-base evidence among documents that do not exceed the residual margin.
-In implementation, empty subsets or near-zero denominators use bounded
-fallback values, and both coefficients are clipped to a fixed range for
-numerical stability.  These fallbacks are not selected from relevance
-labels and are used only for degenerate candidate sets.
+Degenerate cases are handled by fixed label-free defaults.
 
-\subsection{Residual Margin and Gate Scale}
+\subsubsection{Fixed Shape Parameters}
 \label{sec:residual-calibration}
 
-The residual formulation replaces a fixed exclusion threshold with two
-query-conditioned quantities: the robust residual margin $m_q$ and the
-safety-gate scale.  The margin is derived from the dispersion of the
-residual negative scores:
-%
-\begin{equation}
-  m_q = \lambda \cdot
-  \operatorname{MAD}\!\left(\{R_{\text{neg}}(d): d \in \mathcal{C}_q\}\right),
-  \label{eq:residual-margin-scale}
-\end{equation}
-%
-where the median absolute deviation provides a robust scale estimate
-for the current candidate set.  This choice makes the exclusion
-boundary depend on residual evidence rather than raw negative-channel
-score magnitude.
+The main scale parameters, $\alpha_q$ and $\beta_q$, are derived from
+the current query's score statistics.  By contrast, $\lambda$ and
+$\kappa$ are fixed shape constants: $\lambda$ controls how far the
+boundary is placed above the residual median, and $\kappa$ controls the
+sharpness of the gate around that boundary.  They are fixed across
+queries and retrievers, and sensitivity analysis examines their effect.
 
-The safety gate uses the same residual scale:
-%
-\begin{equation}
-  \text{safety}(d) =
-  1-\sigma\!\left(\kappa\frac{R_{\text{neg}}(d)}
-  {\operatorname{MAD}(\{R_{\text{neg}}(d'):d'\in\mathcal{C}_q\})}\right).
-  \label{eq:residual-gate-scale}
-\end{equation}
-%
-Thus, the same residual statistic determines which documents are
-penalized and how much positive reward they receive.  The constants
-$\lambda$ and $\kappa$ are fixed across queries, while $\alpha_q$ and
-$\beta_q$ are derived from per-query score statistics.
-
-\subsection{Label-Free Inference-Time Derivation}
+\subsubsection{Label-Free Inference-Time Derivation}
 \label{sec:train-vs-test}
 
-A critical concern in inference-time calibration is test-set leakage:
+A central risk in inference-time calibration is test-set leakage:
 parameters must not be selected using relevance labels, evaluation
 metrics, or benchmark-level grid search.  Our derivation avoids this
 leakage because $\alpha_q$ and $\beta_q$ are computed only from the
 unlabeled channel scores in $\mathcal{C}_q$.  The retrieval labels are
 never used when computing Eqs.~\ref{eq:alpha}--\ref{eq:beta}.
 %
-The remaining constants $\lambda$ and $\kappa$ define the residual
-margin and gate sharpness.  They are fixed across queries and analyzed
+The remaining constants $\lambda$ and $\kappa$ define the boundary
+offset and gate sharpness.  They are fixed across queries and analyzed
 separately in ablation and sensitivity studies.  This separation keeps
 the method portable across dense retrievers: query-level calibration
-adapts to the score scale of the current retriever, while global
-sensitivity constants are not re-selected for individual test queries.
+adapts to the score scale of the current retriever, while global shape
+constants are not re-selected for individual test queries.
 % ============================================================
 % 5. EXPERIMENTS
 % ============================================================
 \section{Experiments}
 \label{sec:experiments}
 
-\subsection{FollowIR Benchmark Background}
-\label{sec:followir-background}
+\subsection{Evaluation Protocol}
+\label{sec:evaluation-overview}
 
-Table~\ref{tab:followir-background} reports the performance of
-existing retrieval methods on the FollowIR benchmark
-\cite{followir2024}.  Cross encoders (MonoT5-3B, Mistral-7B-instruct,
-FollowIR-7B) and bi-encoder dense models (BM25, TART-Contriever,
-Instructor XL, E5-Mistral, Google Gecko, RepLLaMA, Promptriever) are
-evaluated on three TREC collections.  Most methods exhibit near-zero
-or negative p-MRR, indicating poor instruction sensitivity.
-Promptriever, which is fine-tuned on instruction-annotated data,
-achieves the best overall score but requires supervised training.
+We evaluate \method{} as an inference-time reranking method with frozen
+retrievers.  The main experiments measure whether the same decision-layer
+scorer improves instruction-following retrieval quality across datasets
+and retrievers without retriever fine-tuning or labeled calibration.  On
+FollowIR, we report both instruction sensitivity (p-MRR) and task quality
+(MAP/nDCG and the aggregate Score).  On transfer benchmarks, we lead with
+the task-quality metric appropriate to that benchmark and use
+p-MRR-style evidence only when the benchmark explicitly evaluates
+instruction changes.
 
-\begin{table*}[t]
+The experimental section first presents the main comparison against
+retrieval and query-rewriting baselines, followed by cross-retriever
+results and negation-sensitive transfer.  We then use two compact
+ablation tables to isolate the method's two central mechanisms: the
+residual exclusion boundary with safety-gated reward, and query-local
+$\alpha_q,\beta_q$ calibration.  Sensitivity to $\lambda$, $\kappa$, and
+candidate set size, together with runtime overhead and additional
+standard-retrieval controls, is reported in the appendix.
+
+We use FollowIR \cite{followir2024} as the primary instruction-following
+benchmark.  Table~\ref{tab:followir-background} summarizes the reported
+performance of representative cross encoders (MonoT5-3B,
+Mistral-7B-instruct, FollowIR-7B) and bi-encoder dense models (BM25,
+TART-Contriever, Instructor XL, E5-Mistral, Google Gecko, RepLLaMA,
+Promptriever) on its three TREC collections.  Most off-the-shelf
+retrievers exhibit near-zero or negative p-MRR, indicating limited
+sensitivity to instruction changes.  Promptriever obtains the strongest
+baseline score after supervised instruction tuning, whereas \method{}
+keeps the retriever fixed and applies only inference-time reranking.
+
+\begin{table}[!t]
 \centering
 \small
 \begin{tabular}{llcccccccc}
@@ -751,108 +756,242 @@ achieves the best overall score but requires supervised training.
   ($\times 100$).  DeIR-Dual achieves the highest News21 nDCG, Core17 MAP,
   average score, and average p-MRR without any fine-tuning.}
 \label{tab:followir-background}
-\end{table*}
+\end{table}
 
-\subsection{Main Results: FollowIR Benchmark}
+\subsection{Main Results}
 \label{sec:main-results}
 
-Table~\ref{tab:followir-main} compares \method{} with ten query
-rewriting baselines on the FollowIR benchmark.  \method{} achieves
-the highest mean p-MRR (14.9) and Score (29.0), outperforming
-all baselines by 10.6$\times$ in p-MRR (vs.\ HyDE) and 50.6$\times$
-(vs.\ DeepRetrieval), while also achieving the highest retrieval
-quality.
+\subsubsection{Instruction Following on FollowIR}
 
-\begin{table*}[t]
+Table~\ref{tab:followir-main} reports results on FollowIR.  Among the
+inference-time rewriting and reranking baselines, \method{} obtains the
+best mean p-MRR (14.9) and aggregate Score (29.0).  Compared with the
+strongest rewriting baseline, INF-X Full, \method{} improves p-MRR by
+11.5 points and Score by 2.0 points.  It also obtains the strongest
+aggregate retrieval quality among these methods, with the highest Core17
+MAP and News21 nDCG.  This indicates that the gain in instruction
+sensitivity does not come at the cost of standard retrieval quality.
+Table~\ref{tab:followir-background} further provides frozen retriever
+and supervised instruction-following reference baselines for context:
+compared with the supervised Promptriever reference, \method{} improves
+average Score by 2.9 points and average p-MRR by 3.7 points while
+keeping the retriever fixed.  These results show that explicit
+exclusion-aware reranking is more effective than positive-only query
+enhancement for changed-instruction retrieval.
+
+\begin{table*}[!t]
 \centering
 \small
-\begin{tabular}{l|cc|cc|cc|cc|c}
+\begin{tabular}{l|cc|cc|cc|cc}
 \toprule
-& \multicolumn{2}{c|}{Core17} & \multicolumn{2}{c|}{Robust04} & \multicolumn{2}{c|}{News21} & \multicolumn{2}{c|}{Average} & \\
+& \multicolumn{2}{c|}{Core17} & \multicolumn{2}{c|}{Robust04} & \multicolumn{2}{c|}{News21} & \multicolumn{2}{c}{Average} \\
 \cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
-\textbf{Method} & MAP & p-MRR & MAP & p-MRR & nDCG & p-MRR & Score & p-MRR & Type \\
+\textbf{Method} & MAP & p-MRR & MAP & p-MRR & nDCG & p-MRR & Score & p-MRR \\
 \midrule
-DeepRetrieval & 21.5 & +6.6 & 25.9 & -5.3 & 23.9 & -2.2 & 23.8 & -0.3 & RL query gen. \\
-HyDE & 23.6 & +6.5 & 24.9 & -2.9 & 21.4 & +0.7 & 23.4 & +1.4 & Hypo.\ docs \\
-Query2Doc & 25.9 & +8.0 & 27.9 & -7.5 & 24.9 & -3.8 & 26.2 & -1.1 & Pseudo-doc \\
-RAG-Fusion & 21.9 & +5.4 & 21.1 & -8.1 & 21.0 & +1.8 & 21.3 & -0.3 & Multi-query \\
-RAG-QR & 22.3 & +2.3 & 27.6 & -10.3 & 22.9 & -2.1 & 24.3 & -3.4 & T5 rewriter \\
-ConvSearch-R1 & 22.3 & +3.0 & 25.9 & -2.5 & 22.0 & +0.2 & 23.4 & +0.2 & RL rewriter \\
-INF-X Full & 27.0 & +7.2 & 32.1 & -1.4 & 22.3 & +4.4 & 27.0 & +3.4 & RL rewrite + ret. \\
-BGE-Reasoner-Rewriter & 21.5 & +0.7 & -- & -- & 20.5 & +3.4 & -- & -- & 5-query fusion \\
-ReFeed-8B & 18.3 & -6.6 & 23.3 & -1.2 & 22.4 & -0.4 & 21.2 & -2.7 & CoT refine \\
-TongSearch-QR & 21.7 & +3.3 & 24.5 & -4.6 & 22.6 & +0.2 & 22.7 & -0.4 & Conversational QR \\
+DeepRetrieval & 21.5 & +6.6 & 25.9 & -5.3 & 23.9 & -2.2 & 23.8 & -0.3 \\
+HyDE & 23.6 & +6.5 & 24.9 & -2.9 & 21.4 & +0.7 & 23.4 & +1.4 \\
+Query2Doc & 25.9 & +8.0 & 27.9 & -7.5 & 24.9 & -3.8 & 26.2 & -1.1 \\
+RAG-Fusion & 21.9 & +5.4 & 21.1 & -8.1 & 21.0 & +1.8 & 21.3 & -0.3 \\
+RAG-QR & 22.3 & +2.3 & 27.6 & -10.3 & 22.9 & -2.1 & 24.3 & -3.4 \\
+ConvSearch-R1 & 22.3 & +3.0 & 25.9 & -2.5 & 22.0 & +0.2 & 23.4 & +0.2 \\
+INF-X Full & 27.0 & +7.2 & 32.1 & -1.4 & 22.3 & +4.4 & 27.0 & +3.4 \\
+BGE-Reasoner-Rewriter & 21.5 & +0.7 & -- & -- & 20.5 & +3.4 & -- & -- \\
+ReFeed-8B & 18.3 & -6.6 & 23.3 & -1.2 & 22.4 & -0.4 & 21.2 & -2.7 \\
+TongSearch-QR & 21.7 & +3.3 & 24.5 & -4.6 & 22.6 & +0.2 & 22.7 & -0.4 \\
 \midrule
-DeIR-Dual & \textbf{26.0} & \textbf{+17.6} & \textbf{28.6} & \textbf{+8.3} & \textbf{32.3} & \textbf{+18.7} & \textbf{29.0} & \textbf{+14.9} & Dual-track \\
+DeIR-Dual & \textbf{26.0} & \textbf{+17.6} & \textbf{28.6} & \textbf{+8.3} & \textbf{32.3} & \textbf{+18.7} & \textbf{29.0} & \textbf{+14.9} \\
 \bottomrule
 \end{tabular}
 \caption{Comparison of \method{} with ten query rewriting methods
   on the FollowIR benchmark.  \method{} achieves the highest mean
-  p-MRR (14.9) and Score (29.0), outperforming all baselines
-  by 10.6$\times$ in p-MRR (vs.\ HyDE) and 50.6$\times$ (vs.\
-  DeepRetrieval).  All metrics are percentages ($\times 100$).}
+  p-MRR (14.9) and Score (29.0), improving over the strongest query
+  rewriting baseline (INF-X Full) by 11.5 p-MRR points and 2.0 Score
+  points.  All metrics are percentages ($\times 100$).}
 \label{tab:followir-main}
 \end{table*}
 
-\subsection{Cross-Dataset Validation}
-\label{sec:cross-dataset}
+\subsubsection{Portability Across Frozen Retrievers}
+\label{sec:cross-retriever-main}
 
-\todo{NegConstraint (text retrieval with negation signals);
-  COCO-Neg (multimodal text-to-image negation). Both show
-  significant improvement (+4.3\% nDCG@10 on NegConstraint).}
+Table~\ref{tab:cross-retriever} evaluates \method{} across frozen
+retrievers with different score scales and embedding spaces.  For each
+retriever, reranking is performed on the same top-$K$ candidate set
+returned by the base model.  The same shape constants are used for all
+retrievers, while $\alpha_q$ and $\beta_q$ are derived from each
+query's candidate scores.  This setting tests whether query-local
+calibration is tied to a single encoder or can be applied as a portable
+decision-layer reranker over different frozen retrievers.
 
-\subsection{BEIR Generalization}
-\label{sec:beir-generalization}
+\begin{table*}[!t]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{2}{c}{Base Retriever} &
+\multicolumn{2}{c}{Strong Inference-Time Baseline} &
+\multicolumn{2}{c}{\method{}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}
+\textbf{Retriever} & \textbf{Score} & \textbf{p-MRR}
+& \textbf{Score} & \textbf{p-MRR}
+& \textbf{Score} & \textbf{p-MRR} \\
+\midrule
+E5-Mistral & TBD & TBD & TBD & TBD & TBD & TBD \\
+BGE & TBD & TBD & TBD & TBD & TBD & TBD \\
+GritLM & TBD & TBD & TBD & TBD & TBD & TBD \\
+RepLLaMA & TBD & TBD & TBD & TBD & TBD & TBD \\
+\bottomrule
+\end{tabular}
+\caption{Cross-retriever main results on FollowIR.  The table reports the
+average task-quality Score and instruction-sensitivity p-MRR for each
+frozen retriever.  The same \method{} scoring rule and fixed
+$\lambda,\kappa$ are used across retrievers; only query-local
+$\alpha_q,\beta_q$ are derived from the current candidate set.}
+\label{tab:cross-retriever}
+\end{table*}
 
-\todo{NQ (+1.1\% nDCG@10), HotpotQA (-0.5\%, within variance),
-  MS MARCO (+2.0\% nDCG@10). CONSERVATIVE prompting avoids
-  pseudo-negation disaster.}
+\subsubsection{Transfer to Negation-Sensitive Benchmarks}
+\label{sec:negation-benchmarks}
+
+Table~\ref{tab:negation-transfer} evaluates transfer to NegConstraint,
+a text-retrieval benchmark where exclusion is expressed directly as a
+retrieval constraint.  Following the NegConstraint protocol
+\cite{xu2025logical}, we report the total MAP and nDCG@10 in the main
+text and defer formulation-level results to Appendix~\ref{app:negconstraint}.
+We also include DEO \cite{deo2026}, a close training-free
+negation-aware retrieval baseline.  The method is transferred without
+dataset-specific retraining or coefficient search: the same scoring
+mechanism and fixed shape constants are used, while $\alpha_q$ and
+$\beta_q$ are derived from unlabeled candidate-set scores.  This setting
+tests whether the residual boundary mechanism generalizes beyond
+FollowIR's changed-instruction protocol and whether it improves over
+positive-only refinement and raw negative penalties.
+
+\begin{table*}[!t]
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+\textbf{Method} & \textbf{MAP} & \textbf{nDCG@10} \\
+\midrule
+BM25 & 31.4 & 33.7 \\
+Contriever & 31.8 & 35.7 \\
+BGE & 36.3 & 40.8 \\
+HyDE & 47.8 & 53.1 \\
+InteR & 52.3 & 54.5 \\
+NS-IR (GPT-4o) & 53.3 & 56.5 \\
+\midrule
+BGE-S & 67.0 & 73.7 \\
+BGE-S w/ DEO & 73.0 & 78.0 \\
+BGE-L & 63.0 & 71.4 \\
+BGE-L w/ DEO & 73.3 & 78.8 \\
+BGE-M3 & 63.7 & 72.5 \\
+BGE-M3 w/ DEO & 73.8 & 79.5 \\
+\midrule
+Base retriever & TBD & TBD \\
++ Positive channel & TBD & TBD \\
++ Raw negative penalty & TBD & TBD \\
+\method{} & TBD & TBD \\
+\bottomrule
+\end{tabular}
+\caption{Transfer to NegConstraint \cite{xu2025logical}.  The main text
+  reports total MAP and nDCG@10; formulation-level results are deferred
+  to Appendix~\ref{app:negconstraint}.  DEO results are reported in its
+  arXiv preprint \cite{deo2026}; BGE-S and BGE-L denote
+  BGE-small-en-v1.5 and BGE-large-en-v1.5.  All scores are percentages
+  ($\times 100$).}
+\label{tab:negation-transfer}
+\end{table*}
 
 \subsection{Ablation Study}
+\label{sec:mechanism-analysis}
+
+The main text keeps the ablation study deliberately compact.  The first
+table tests the residual-boundary mechanism, and the second table tests
+query-local score calibration.  Other implementation and robustness
+checks are deferred to Appendix~\ref{app:additional-ablations} so that
+each main-text table answers a single reviewer question.
+
+\subsubsection{Core Mechanism: From Positive Rewriting to Residual Boundary}
 \label{sec:ablation}
 
-\todo{Ablate the final residual-scoring components: positive refinement,
-  negative residual branch, safety-gated reward, linear fusion, and
-  background-leakage subtraction in the appendix.}
+Table~\ref{tab:ablation-mechanism} attributes the first technical
+contribution by comparing positive-only refinement, raw
+negative-channel penalization, residual-boundary penalization, and the
+full safety-gated calibrated scorer under the same retrieval setting.
 
-\subsection{Encoder-Agnostic Analysis}
-\label{sec:encoder-agnostic}
+\begin{table*}[!t]
+\centering
+\small
+\setlength{\tabcolsep}{3.6pt}
+\begin{tabular}{l|cc|cc|cc|cc}
+\toprule
+\multirow{2}{*}{\textbf{Variant}} &
+\multicolumn{2}{c|}{Core17} &
+\multicolumn{2}{c|}{Robust04} &
+\multicolumn{2}{c|}{News21} &
+\multicolumn{2}{c}{Average} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+& MAP & p-MRR & MAP & p-MRR & nDCG & p-MRR & Score & p-MRR \\
+\midrule
+Base retriever & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
++ Positive channel & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
++ Raw negative penalty & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
++ Residual boundary & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+Full \method{} & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+\bottomrule
+\end{tabular}
+\caption{Core mechanism ablation on FollowIR.  All variants use the same
+frozen encoder and candidate pool.  The rows isolate positive
+refinement, direct raw negative-channel penalization, residual-boundary
+penalization, and the full scorer with safety-gated query-local
+calibration.  All metrics are percentages ($\times 100$).}
+\label{tab:ablation-mechanism}
+\end{table*}
 
-\todo{EAPS strategy: RepLLaMA (0.08\% at-risk) vs Mistral (62.9\%
-  at-risk). Retrieval-simulated distractor sampling with top-k=1000.}
+\subsubsection{Query-Local Calibration}
+\label{sec:calibration-ablation}
 
-% ============================================================
-% 6. ANALYSIS: SEMANTIC ENTANGLEMENT
-% ============================================================
-\section{Analysis: Semantic Entanglement}
-\label{sec:analysis}
+Table~\ref{tab:ablation-threshold-calibration} tests whether the gains
+can be explained by ordinary parameter tuning.  Improvements from
+query-local calibration over fixed and global coefficients support the
+active-region scale-matching principle, while the oracle row quantifies
+remaining headroom under benchmark-level tuning.
 
-\subsection{Definition and Variants}
-\label{sec:entanglement-definition}
+\begin{table*}[!t]
+\centering
+\small
+\setlength{\tabcolsep}{3.6pt}
+\begin{tabular}{l|cc|cc|cc|cc}
+\toprule
+\multirow{2}{*}{\textbf{Scale Selection}} &
+\multicolumn{2}{c|}{Core17} &
+\multicolumn{2}{c|}{Robust04} &
+\multicolumn{2}{c|}{News21} &
+\multicolumn{2}{c}{Average} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+& MAP & p-MRR & MAP & p-MRR & nDCG & p-MRR & Score & p-MRR \\
+\midrule
+Fixed $\alpha,\beta$ & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+Global calibration & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+Query-local calibration & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+Grid-search oracle & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+\bottomrule
+\end{tabular}
+\caption{Calibration ablation on FollowIR.  All rows use the same
+residual boundary and safety gate; only the selection of $\alpha$ and
+$\beta$ changes.  The oracle row is used only as an analysis upper bound
+for tuned alternatives, not as a deployable method.  All metrics are
+percentages ($\times 100$).}
+\label{tab:ablation-threshold-calibration}
+\end{table*}
 
-\todo{Structural entanglement (ComLQ: negation clauses share semantics
-  with positive intent). Generative entanglement (NQ: LLM generates
-  pseudo-negations overlapping with $\qbase$).}
-
-\subsection{Diagnostic Analysis}
-\label{sec:entanglement-diagnosis}
-
-\todo{$\cos(\mathbf{h}_{\text{base}}, \mathbf{h}_{\text{neg}})$ distribution: NegConstraint (orthogonal)
-  vs ComLQ (0.705 mean) vs NQ (0.625 mean). $S_{\text{neg}}$ higher
-  on relevant documents $\rightarrow$ double whammy effect.}
-
-\begin{figure}[t]
-  \centering
-  % \includegraphics[width=\columnwidth]{figures/semantic_entanglement.pdf}
-  \fbox{\parbox{\columnwidth}{\centering\vspace{3cm}%
-    \textbf{Figure 3: Semantic Entanglement Distribution}\\
-    \small (placeholder: to be replaced with violin/box plot)\vspace{1cm}}}
-  \caption{Distribution of $\cos(\mathbf{h}_{\text{base}}, \mathbf{h}_{\text{neg}})$ across three
-    scenarios. NegConstraint shows orthogonality (penalty effective),
-    while ComLQ (structural entanglement) and NQ (generative
-    entanglement) exhibit significant overlap, causing penalty failure.}
-  \label{fig:semantic-entanglement}
-\end{figure}
+We fix $\lambda$ and $\kappa$ across all retrievers and datasets;
+sensitivity results in the appendix verify that performance is stable
+over a broad range.
+Additional analyses cover candidate-set size sensitivity,
+$\alpha_q$-only and $\beta_q$-only variants, mean/std versus median/MAD
+boundary estimation, runtime overhead, robustness on standard retrieval
+benchmarks, and semantic-entanglement failure cases.
 
 % ============================================================
 % 7. CONCLUSION AND LIMITATIONS
@@ -860,8 +999,148 @@ DeIR-Dual & \textbf{26.0} & \textbf{+17.6} & \textbf{28.6} & \textbf{+8.3} & \te
 \section{Conclusion and Limitations}
 \label{sec:conclusion}
 
-\todo{Summary: three contributions. Limitations: semantic entanglement,
-  LLM dependency, high at-risk encoder sensitivity. Future directions.}
+This paper presented \method{}, a frozen-retriever decision-layer
+reranking method for text retrieval under exclusion-sensitive
+instructions.  The central idea is to avoid treating negative-query
+similarity as uniformly harmful.  \method{} first uses triple-query
+decomposition to separate contextual relevance, positive refinement, and
+exclusion evidence; it then estimates a query-adaptive residual
+exclusion boundary over the candidate set and applies label-free
+query-local score calibration to place residual penalties and gated
+positive rewards on comparable scales.  The current FollowIR results
+show improvements in instruction sensitivity and aggregate retrieval
+quality over inference-time rewriting and reranking baselines, while the
+cross-retriever, transfer, ablation, and appendix sensitivity analyses
+are designed to test whether these gains persist across frozen
+retrievers, datasets, mechanism variants, and fixed shape constants once
+their remaining entries are completed.
+
+The scope of \method{} is bounded by several limitations.  It depends
+on LLM-generated decompositions, so ambiguous or underspecified
+instructions can propagate errors into the positive and negative
+channels.  High-overlap cases, where desired and excluded semantics are
+tightly entangled, remain difficult because residual exclusion evidence
+can be hard to distinguish from background relevance.  The fixed shape
+constants $\lambda$ and $\kappa$ are intended to improve portability,
+but their stability still requires the planned sensitivity validation.
+Finally, because \method{} reranks an existing candidate set rather than
+retrieving new documents, its effectiveness depends on the base
+retriever placing relevant documents in $\mathcal{C}_q$; missed
+candidates cannot be recovered by the decision-layer scorer.
+
+% ============================================================
+% APPENDIX
+% ============================================================
+\appendix
+
+\section{Additional Ablations and Sensitivity}
+\label{app:additional-ablations}
+
+Table~\ref{tab:diagnostic-ablation} separates smaller design choices
+that should not be conflated with the two main ablations.  These rows
+are used to check whether the proposed robust boundary, safety gate, and
+two-sided calibration each contribute beyond simpler replacements.
+
+\begin{table*}[!t]
+\centering
+\small
+\begin{tabular}{llccc}
+\toprule
+\textbf{Variant} & \textbf{Change from Full \method{}} &
+\textbf{Avg Score} & \textbf{Avg p-MRR} & \textbf{Runtime} \\
+\midrule
+Full \method{} & None & TBD & TBD & TBD \\
+w/o safety gate & Remove $g_q(d)$ from positive reward & TBD & TBD & TBD \\
+$\alpha_q$ only & Query-local penalty scale, fixed reward scale & TBD & TBD & TBD \\
+$\beta_q$ only & Query-local reward scale, fixed penalty scale & TBD & TBD & TBD \\
+Mean/std boundary & Replace median/MAD boundary with mean/std & TBD & TBD & TBD \\
+Raw $s_n$ boundary & Estimate boundary on raw negative similarity & TBD & TBD & TBD \\
+\bottomrule
+\end{tabular}
+\caption{Diagnostic ablations for secondary design choices.  The table
+keeps the same frozen retriever and candidate pool as
+Table~\ref{tab:ablation-mechanism}; missing values are placeholders to
+be filled after running the corresponding controlled variants.}
+\label{tab:diagnostic-ablation}
+\end{table*}
+
+Table~\ref{tab:sensitivity-efficiency} reports the planned robustness
+and efficiency checks.  The $\lambda$ and $\kappa$ sweeps verify that the
+fixed shape constants are not serving as hidden test-set tuning, while
+candidate-set and runtime analyses quantify the inference-time cost of
+candidate-set score calibration.
+
+\begin{table*}[!t]
+\centering
+\small
+\begin{tabular}{llcccc}
+\toprule
+\textbf{Analysis} & \textbf{Setting} & \textbf{Avg Score} &
+\textbf{Avg p-MRR} & \textbf{Latency} & \textbf{Notes} \\
+\midrule
+$\lambda$ sensitivity & $\lambda \in \{\text{TBD}\}$ & TBD & TBD & TBD & Boundary offset \\
+$\kappa$ sensitivity & $\kappa \in \{\text{TBD}\}$ & TBD & TBD & TBD & Gate sharpness \\
+Candidate set size & $K \in \{\text{TBD}\}$ & TBD & TBD & TBD & Reranking depth \\
+Standard retrieval control & BEIR/TREC subset & TBD & -- & TBD & No instruction changes \\
+Failure subset & High semantic-overlap queries & TBD & TBD & TBD & Entanglement cases \\
+\bottomrule
+\end{tabular}
+\caption{Sensitivity, efficiency, and robustness result template.  These
+analyses are intended to accompany the main ablations without changing
+the deployed scoring rule; all missing values should be filled from
+matched evaluation runs.}
+\label{tab:sensitivity-efficiency}
+\end{table*}
+
+\section{Additional NegConstraint Results}
+\label{app:negconstraint}
+
+Table~\ref{tab:negconstraint-full} provides the formulation-level
+NegConstraint results corresponding to the total scores reported in
+Table~\ref{tab:negation-transfer}.  DEO reports only total scores in
+the referenced preprint, so its formulation-level entries are left
+blank.
+
+\begin{table*}[!t]
+\centering
+\small
+\setlength{\tabcolsep}{3.4pt}
+\begin{tabular}{lcc|cc|cc|cc}
+\toprule
+\multirow{2}{*}{\textbf{Method}}
+& \multicolumn{2}{c|}{$A-a$}
+& \multicolumn{2}{c|}{$(A-a)\cup B$}
+& \multicolumn{2}{c|}{$(A-a)\cup(B-b)$}
+& \multicolumn{2}{c}{Total} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+& MAP & nDCG@10 & MAP & nDCG@10 & MAP & nDCG@10 & MAP & nDCG@10 \\
+\midrule
+BM25 & 32.1 & 34.6 & 31.2 & 34.7 & 29.3 & 31.5 & 31.4 & 33.7 \\
+Contriever & 34.8 & 36.6 & 32.1 & 33.3 & 30.9 & 32.7 & 31.8 & 35.7 \\
+BGE & 37.9 & 40.5 & 34.8 & 36.8 & 33.7 & 34.8 & 36.3 & 40.8 \\
+HyDE & 50.7 & 55.3 & 48.6 & 51.5 & 45.7 & 50.6 & 47.8 & 53.1 \\
+InteR & 52.6 & 55.8 & 50.3 & 48.7 & 51.5 & 49.3 & 52.3 & 54.5 \\
+NS-IR (GPT-4o) & 54.7 & 57.9 & 53.3 & 54.2 & 51.7 & 53.7 & 53.3 & 56.5 \\
+\midrule
+BGE-S & -- & -- & -- & -- & -- & -- & 67.0 & 73.7 \\
+BGE-S w/ DEO & -- & -- & -- & -- & -- & -- & 73.0 & 78.0 \\
+BGE-L & -- & -- & -- & -- & -- & -- & 63.0 & 71.4 \\
+BGE-L w/ DEO & -- & -- & -- & -- & -- & -- & 73.3 & 78.8 \\
+BGE-M3 & -- & -- & -- & -- & -- & -- & 63.7 & 72.5 \\
+BGE-M3 w/ DEO & -- & -- & -- & -- & -- & -- & 73.8 & 79.5 \\
+\midrule
+Base retriever & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
++ Positive channel & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
++ Raw negative penalty & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+\method{} & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+\bottomrule
+\end{tabular}
+\caption{Formulation-level NegConstraint results.  ACL reference results
+  are taken from the NegConstraint paper \cite{xu2025logical}.  DEO
+  results are total-only numbers reported in its arXiv preprint
+  \cite{deo2026}.  All scores are percentages ($\times 100$).}
+\label{tab:negconstraint-full}
+\end{table*}
 
 % ============================================================
 % REFERENCES

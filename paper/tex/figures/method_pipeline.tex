@@ -1,0 +1,88 @@
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\scriptsize,
+  >=Latex,
+  line/.style={draw=black!68, line width=0.45pt},
+  arrow/.style={line, -{Latex[length=2.0mm,width=1.2mm]}},
+  softarrow/.style={draw=black!45, line width=0.4pt, -{Latex[length=1.8mm,width=1.0mm]}},
+  box/.style={line, rounded corners=1.1pt, align=center, fill=white, inner xsep=3pt, inner ysep=3.5pt},
+  stage/.style={box, fill=black!3, minimum width=1.34cm, minimum height=0.58cm},
+  base/.style={box, fill=blue!7, draw=blue!45!black, minimum width=1.12cm, minimum height=0.44cm},
+  positive/.style={box, fill=green!8, draw=green!40!black, minimum width=1.12cm, minimum height=0.44cm},
+  neg/.style={box, fill=red!7, draw=red!45!black, minimum width=1.12cm, minimum height=0.44cm},
+  score/.style={box, fill=black!2, minimum width=1.42cm, minimum height=1.16cm},
+  decision/.style={box, fill=orange!8, draw=orange!55!black, minimum width=1.92cm, minimum height=0.82cm},
+  final/.style={box, fill=purple!7, draw=purple!45!black, minimum height=0.80cm},
+  title/.style={font=\tiny\bfseries, text=black!68},
+  note/.style={font=\tiny, align=center, text=black!66}
+]
+
+% Query construction and scoring.
+\node[stage] (input) at (0,0) {Query +\\Instruction};
+\node[stage] (decomp) at (1.70,0) {LLM\\Decomposer};
+\node[base] (qbase) at (3.22,0.66) {$\qbase$\\[-1pt]\tiny context};
+\node[positive] (qpos) at (3.22,0) {$\qpos$\\[-1pt]\tiny refine};
+\node[neg] (qminus) at (3.22,-0.66) {$\qminus$\\[-1pt]\tiny exclude};
+\node[stage, minimum width=1.28cm] (retriever) at (4.92,0) {Frozen\\Retriever};
+\node[stage, minimum width=1.22cm] (docs) at (4.92,-1.04) {Docs\\$v_d$};
+\node[score] (scores) at (6.78,0) {
+  channel scores\\[-1pt]
+  \tiny $\sbase(d)$\\[-1pt]
+  \tiny $\spos(d)$\\[-1pt]
+  \tiny $\sneg(d)$
+};
+\node[stage, minimum width=1.34cm] (cand) at (6.78,-1.26) {Candidate\\set $\mathcal{C}_q$};
+
+\draw[arrow] (input) -- (decomp);
+\draw[arrow] (decomp.east) -- ++(0.25,0) |- (qbase.west);
+\draw[arrow] (decomp.east) -- (qpos.west);
+\draw[arrow] (decomp.east) -- ++(0.25,0) |- (qminus.west);
+\draw[arrow] (qbase.east) -- ++(0.24,0) |- (retriever.west);
+\draw[arrow] (qpos.east) -- (retriever.west);
+\draw[arrow] (qminus.east) -- ++(0.24,0) |- (retriever.west);
+\draw[softarrow] (docs.north) -- (retriever.south);
+\draw[arrow] (retriever) -- (scores);
+\draw[softarrow] (cand.north) -- (scores.south);
+
+\node[title, anchor=west] at (-0.14,1.16) {1. Separate instruction signals};
+\draw[line, rounded corners=2pt, densely dashed, draw=black!30]
+  ($(qbase.north west)+(-0.08,0.15)$) rectangle ($(qminus.south east)+(0.08,-0.13)$);
+
+% Candidate-set decision layer.
+\node[decision] (bg) at (1.35,-2.72) {
+  background leakage\\[-1pt]
+  \tiny $z_b,\;c_q,\;\mu_n,\sigma_n$\\[-1pt]
+  \tiny $\Rightarrow \widehat{S}^{bg}_{neg}$
+};
+\node[decision] (residual) at (3.95,-2.72) {
+  residual boundary\\[-1pt]
+  \tiny $R_{neg}=\sneg-\widehat{S}^{bg}_{neg}$\\[-1pt]
+  \tiny $\tau_q=\operatorname{med}+\lambda\operatorname{MAD}$
+};
+\node[decision] (calib) at (6.55,-2.72) {
+  active-region calibration\\[-1pt]
+  \tiny $\mathcal{A}_q:o_q>0 \Rightarrow \alpha_q$\\[-1pt]
+  \tiny $\mathcal{B}_q:o_q\le0 \Rightarrow \beta_q$
+};
+\node[final, minimum width=2.70cm] (compose) at (4.72,-3.92) {
+  safety-gated decision score\\[-1pt]
+  \tiny $\sfinal=\sbase+\mathrm{reward}_{\beta_q,g_q}-\mathrm{penalty}_{\alpha_q,\tau_q}$
+};
+\node[stage, minimum width=1.12cm] (rank) at (7.82,-3.92) {Final\\Ranking};
+
+\draw[arrow] (scores.south) -- ++(0,-0.42) -| (bg.north);
+\draw[arrow] (scores.south) -- ++(0,-0.42) -| (residual.north);
+\draw[arrow] (cand.south) -- ++(0,-0.30) -| (calib.north);
+\draw[arrow] (bg) -- (residual);
+\draw[arrow] (residual) -- (calib);
+\draw[arrow] (residual.south) -- ++(0,-0.24) -| (compose.north west);
+\draw[arrow] (calib.south) -- ++(0,-0.24) -| (compose.north east);
+\draw[arrow] (compose) -- (rank);
+
+\node[title, anchor=west] at (-0.14,-1.80) {2. Query-local decision layer over the same candidate set};
+\node[note, anchor=west] at (0.10,-3.92) {fixed retriever;\\label-free statistics};
+\draw[line, rounded corners=2pt, densely dashed, draw=orange!55!black]
+  ($(bg.north west)+(-0.12,0.24)$) rectangle ($(rank.south east)+(0.12,-0.20)$);
+
+\end{tikzpicture}%
+}

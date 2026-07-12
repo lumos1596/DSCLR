@@ -4,6 +4,7 @@ from .e5_mistral_encoder import E5MistralEncoder
 from .repllama_encoder import RepLLaMAEncoder
 from .llama3_encoder import LLaMA31Encoder
 from .infx_encoder import INFXRetrieverEncoder
+from .gritlm_encoder import GritLMEncoder
 
 # 注册 E5-Mistral 编码器
 ModelFactory.register("e5-mistral-7b-instruct", E5MistralEncoder)
@@ -25,6 +26,10 @@ ModelFactory.register("meta-llama/Meta-Llama-3.1-8B-Instruct", LLaMA31Encoder)
 ModelFactory.register("inf-retriever-v1-pro", INFXRetrieverEncoder)
 ModelFactory.register("infly/inf-retriever-v1-pro", INFXRetrieverEncoder)
 
+# 注册 GritLM 编码器
+ModelFactory.register("GritLM/GritLM-7B", GritLMEncoder)
+ModelFactory.register("gritlm-7b", GritLMEncoder)
+
 __all__ = [
     'BaseEncoder',
     'SentenceTransformerEncoder',
@@ -32,6 +37,7 @@ __all__ = [
     'RepLLaMAEncoder',
     'LLaMA31Encoder',
     'INFXRetrieverEncoder',
+    'GritLMEncoder',
     'ModelFactory',
     'DenseRetriever'
 ]
