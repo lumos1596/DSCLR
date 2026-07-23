@@ -21,9 +21,18 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Force online mode BEFORE importing datasets/huggingface_hub
+os.environ["HF_HUB_OFFLINE"] = "0"
+os.environ["HF_DATASETS_OFFLINE"] = "0"
+os.environ["TRANSFORMERS_OFFLINE"] = "0"
 os.environ.pop("HF_ENDPOINT", None)
-os.environ.pop("HF_HUB_OFFLINE", None)
-os.environ.pop("HF_DATASETS_OFFLINE", None)
+
+# Also patch huggingface_hub constants before any import
+try:
+    import huggingface_hub.constants as _hf_const
+    _hf_const.HF_HUB_OFFLINE = False
+except Exception:
+    pass
 
 import json
 import logging
@@ -38,7 +47,14 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 import datasets
+# Patch datasets offline mode after import
+try:
+    datasets.config.HF_DATASETS_OFFLINE = False
+except Exception:
+    pass
 import pytrec_eval
+
+from eval.residual_boundary import compute_background_residual_boundary
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +160,11 @@ class BEIREvaluator:
         candidate_model_name: Optional[str] = None,
         top_k: int = 100,
         t_safety: float = 10.0,
+        boundary_mode: str = "semantic",
+        residual_margin_scale: float = 1.0,
+        safety_kappa: float = 0.0,
+        per_query_ab: bool = False,
+        beta_derive_mode: str = "max_mean",
         device: str = "auto",
         batch_size: int = 64,
         max_seq_length: Optional[int] = None,
@@ -161,6 +182,11 @@ class BEIREvaluator:
         self.output_dir = output_dir
         self.top_k = top_k
         self.t_safety = t_safety
+        self.boundary_mode = boundary_mode
+        self.residual_margin_scale = residual_margin_scale
+        self.safety_kappa = safety_kappa
+        self.per_query_ab = per_query_ab
+        self.beta_derive_mode = beta_derive_mode
         self.batch_size = batch_size
         self.max_seq_length = max_seq_length
         self.cache_checkpoint_interval = max(1, cache_checkpoint_interval)
@@ -341,13 +367,58 @@ class BEIREvaluator:
     ) -> torch.Tensor:
         if not has_neg:
             s_req_eff = s_req if has_req else torch.zeros_like(s_base)
+            if self.per_query_ab and has_req and s_base.numel() > 0:
+                safety = torch.ones_like(s_base)
+                if self.beta_derive_mode == "max_mean":
+                    max_b = s_base.max()
+                    mean_r = s_req.mean()
+                    beta = float((max_b / mean_r).item()) if mean_r > 1e-8 else beta
+                    beta = min(beta, 50.0)
             return s_base + beta * s_req_eff
 
-        tau = cos_qbase_qneg + delta
-        overflow = s_neg - tau
-        smooth_penalty = F.softplus(overflow)
+        # V8 residual_bg boundary
+        if self.boundary_mode == "residual_bg":
+            boundary = compute_background_residual_boundary(
+                s_base=s_base,
+                s_neg=s_neg,
+                cos_qbase_qneg=cos_qbase_qneg,
+                margin_scale=self.residual_margin_scale,
+            )
+            overflow = boundary.overflow
+            smooth_penalty = F.softplus(overflow)
+            tau = cos_qbase_qneg + delta
+
+            # safety_kappa gate: MAD-normalized residual safety
+            if self.safety_kappa > 0 and boundary.mad > 1e-8:
+                safety = 1.0 - torch.sigmoid(
+                    boundary.residual / boundary.mad * self.safety_kappa
+                )
+            else:
+                safety = 1.0 - torch.sigmoid((s_neg - tau) * self.t_safety)
+        else:
+            tau = cos_qbase_qneg + delta
+            overflow = s_neg - tau
+            smooth_penalty = F.softplus(overflow)
+            safety = 1.0 - torch.sigmoid(overflow * self.t_safety)
+
+        # per_query_ab derivation
+        if self.per_query_ab:
+            at_risk_mask = overflow > 0
+            safe_mask = ~at_risk_mask
+            if at_risk_mask.any():
+                mean_base_risk = s_base[at_risk_mask].mean()
+                mean_penalty_risk = smooth_penalty[at_risk_mask].mean()
+                if mean_penalty_risk > 1e-8:
+                    alpha = float((mean_base_risk / mean_penalty_risk).item())
+            if has_req and safe_mask.any():
+                if self.beta_derive_mode == "max_mean":
+                    max_b = s_base[safe_mask].max()
+                    mean_r = s_req[safe_mask].mean()
+                    beta = float((max_b / mean_r).item()) if mean_r > 1e-8 else beta
+            alpha = min(alpha, 50.0)
+            beta = min(beta, 50.0)
+
         raw_penalty = alpha * smooth_penalty
-        safety = 1.0 - torch.sigmoid((s_neg - tau) * self.t_safety)
         s_req_eff = s_req if has_req else torch.zeros_like(s_base)
         s_final = s_base + beta * s_req_eff * safety - raw_penalty
         return s_final
@@ -815,6 +886,17 @@ def main():
     parser.add_argument("--deltas", type=str, default="0.10",
                         help="Comma-separated delta values")
     parser.add_argument("--t_safety", type=float, default=10.0)
+    parser.add_argument("--boundary_mode", type=str, default="semantic",
+                        choices=["semantic", "residual_bg"],
+                        help="Boundary computation mode")
+    parser.add_argument("--residual_margin_scale", type=float, default=1.0,
+                        help="Margin scale for residual_bg boundary")
+    parser.add_argument("--safety_kappa", type=float, default=0.0,
+                        help="Safety kappa for MAD-normalized residual safety gate")
+    parser.add_argument("--per_query_ab", type=str, default="false",
+                        help="Enable per-query alpha/beta derivation (true/false)")
+    parser.add_argument("--beta_derive_mode", type=str, default="max_mean",
+                        help="Beta derivation mode for per_query_ab")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--max_seq_length", type=int, default=512,
@@ -847,6 +929,11 @@ def main():
         output_dir=args.output_dir,
         top_k=args.top_k,
         t_safety=args.t_safety,
+        boundary_mode=args.boundary_mode,
+        residual_margin_scale=args.residual_margin_scale,
+        safety_kappa=args.safety_kappa,
+        per_query_ab=args.per_query_ab.lower() == "true",
+        beta_derive_mode=args.beta_derive_mode,
         device=args.device,
         batch_size=args.batch_size,
         max_seq_length=args.max_seq_length,

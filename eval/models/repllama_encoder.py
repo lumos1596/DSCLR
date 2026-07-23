@@ -33,6 +33,12 @@ class RepLLaMAEncoder(BaseEncoder):
         "llama3": "/home/luwa/Documents/models/LLM-Research/Meta-Llama-3.1-8B-Instruct",
         "mistral": "/home/luwa/Documents/models/mistral/Mistral-7B-v0.1",
     }
+
+    # 当本地路径不存在时，回退到 HF 镜像仓库 ID（非 gated，可公开下载）
+    BASE_MODEL_HF_FALLBACK = {
+        "llama3": "NousResearch/Meta-Llama-3.1-8B-Instruct",
+        "llama2": "NousResearch/Llama-2-7b-hf",
+    }
     
     # Adapter 本地路径映射
     ADAPTER_LOCAL_MAP = {
@@ -77,26 +83,45 @@ class RepLLaMAEncoder(BaseEncoder):
     
     @classmethod
     def _infer_base_model(cls, model_name: str) -> str:
-        """根据 adapter 名称推断基础模型"""
+        """根据 adapter 名称推断基础模型（本地路径优先，缺失时回退到 HF 镜像仓库 ID）"""
         name_lower = model_name.lower()
         if "llama3" in name_lower or "llama-3" in name_lower or "llama3.1" in name_lower:
-            return cls.BASE_MODEL_MAP["llama3"]
+            local = cls.BASE_MODEL_MAP["llama3"]
+            if os.path.isdir(local):
+                return local
+            fallback = cls.BASE_MODEL_HF_FALLBACK["llama3"]
+            logger.info(f"   本地基础模型路径不存在: {local}，回退到 HF 镜像: {fallback}")
+            return fallback
         elif "mistral" in name_lower:
             return cls.BASE_MODEL_MAP["mistral"]
         else:
             # 默认 LLaMA2
-            return cls.BASE_MODEL_MAP["llama2"]
+            local = cls.BASE_MODEL_MAP["llama2"]
+            if os.path.isdir(local):
+                return local
+            fallback = cls.BASE_MODEL_HF_FALLBACK["llama2"]
+            logger.info(f"   本地基础模型路径不存在: {local}，回退到 HF 镜像: {fallback}")
+            return fallback
     
     def _load_peft_adapter_model(self, adapter_path: str):
         """加载 PEFT adapter（RepLLaMA 或 Promptriever）+ 本地基础模型"""
-        # 解析 adapter 本地路径
+        # 解析 adapter 本地路径：优先本地，缺失则回退到 HF 仓库 ID（自动下载）
         local_adapter_path = self.ADAPTER_LOCAL_MAP.get(adapter_path, adapter_path)
         if not os.path.isdir(local_adapter_path):
             # 尝试在 models 目录下查找
-            local_adapter_path = os.path.join("/home/luwa/Documents/models", adapter_path.split("/")[-1])
-        
+            candidate = os.path.join("/home/luwa/Documents/models", adapter_path.split("/")[-1])
+            if os.path.isdir(candidate):
+                local_adapter_path = candidate
+            else:
+                # 本地不存在，回退到 HF 仓库 ID（允许 HF Hub 自动下载）
+                local_adapter_path = adapter_path
+                logger.info(f"   本地 adapter 不存在，使用 HF 仓库 ID: {adapter_path}")
+
+        # 判断基础模型是本地路径还是 HF 仓库 ID
+        is_base_model_local_path = os.path.isdir(self.base_model_path)
+
         logger.info(f"   加载 PEFT adapter: {adapter_path} -> {local_adapter_path}")
-        logger.info(f"   使用本地基础模型: {self.base_model_path}")
+        logger.info(f"   基础模型: {self.base_model_path} ({'本地' if is_base_model_local_path else 'HF 仓库'})")
         
         self.tokenizer = AutoTokenizer.from_pretrained(self.base_model_path)
         if self.tokenizer.pad_token is None:
@@ -129,7 +154,9 @@ class RepLLaMAEncoder(BaseEncoder):
             )
         
         model = PeftModel.from_pretrained(base_model, local_adapter_path)
-        self.model = model.merge_and_unload()
+        # 不 merge_and_unload：device_map="auto" 多卡分布下，合并需要将所有层
+        # 临时加载到单 GPU，导致 OOM。直接使用 PEFT 模型推理即可。
+        self.model = model
         self.model.eval()
         
         # 记录输入设备

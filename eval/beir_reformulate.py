@@ -13,9 +13,17 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Force online mode BEFORE any imports
+os.environ["HF_HUB_OFFLINE"] = "0"
+os.environ["HF_DATASETS_OFFLINE"] = "0"
+os.environ["TRANSFORMERS_OFFLINE"] = "0"
 os.environ.pop("HF_ENDPOINT", None)
-os.environ.pop("HF_HUB_OFFLINE", None)
-os.environ.pop("HF_DATASETS_OFFLINE", None)
+
+try:
+    import huggingface_hub.constants as _hf_const
+    _hf_const.HF_HUB_OFFLINE = False
+except Exception:
+    pass
 
 import json
 import re
@@ -31,6 +39,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm import tqdm
 
 import datasets
+try:
+    datasets.config.HF_DATASETS_OFFLINE = False
+except Exception:
+    pass
 
 logger = logging.getLogger(__name__)
 

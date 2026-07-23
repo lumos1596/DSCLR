@@ -55,6 +55,7 @@ class E5MistralEncoder:
         max_seq_length: int = None,  # 兼容参数，会被 max_length 覆盖
         normalize_embeddings: bool = True,
         local_files_only: bool = False,  # 是否只使用本地文件
+        device_map: str = "auto",  # 多卡并行：auto 自动分配层到多 GPU
         **kwargs  # 吸收其他未使用的参数
     ):
         self.model_name = model_name
@@ -62,7 +63,7 @@ class E5MistralEncoder:
         self.batch_size = batch_size
         self.max_length = max_length
         self.normalize_embeddings = normalize_embeddings
-        
+
         # 检查本地缓存路径
         local_path = f"/home/luwa/.cache/huggingface/e5-mistral-7b-instruct"
         import os
@@ -73,25 +74,30 @@ class E5MistralEncoder:
         else:
             logger.info(f"📥 从 HuggingFace 加载 E5-Mistral 模型: {model_name}")
             model_path = model_name
-        
-        logger.info(f"   设备: {device}, 精度: BFloat16, Batch: {batch_size}")
-        
+
+        logger.info(f"   设备: {device}, 精度: BFloat16, Batch: {batch_size}, device_map: {device_map}")
+
         # 加载 Tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path,
             local_files_only=local_files_only
         )
-        
+
         # 加载模型 - 使用 BFloat16 防止 FP16 溢出
+        # device_map="auto" 时 accelerate 自动将模型层分配到多 GPU
         self.model = AutoModel.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
-            device_map=device,
+            device_map=device_map,
             local_files_only=local_files_only
         )
         self.model.eval()
-        
-        logger.info(f"✅ E5-Mistral 模型加载完成 (BFloat16)")
+
+        # 记录模型实际所在的设备（多卡时为第一个参数的设备）
+        first_device = next(self.model.parameters()).device
+        self._input_device = str(first_device)
+
+        logger.info(f"✅ E5-Mistral 模型加载完成 (BFloat16), input_device={self._input_device}")
     
     def _format_query(self, query: str, task: Optional[str] = None) -> str:
         """
@@ -180,16 +186,16 @@ class E5MistralEncoder:
                     padding=True,
                     return_attention_mask=True,
                     return_tensors='pt'
-                ).to(self.model.device)
+                ).to(self._input_device)
                 
                 # 第四步：模型前向传播
                 outputs = self.model(**batch_dict)
                 
                 # 第五步：Last Token Pooling（严禁 Mean Pooling！）
-                embeddings = last_token_pool(
-                    outputs.last_hidden_state,
-                    batch_dict['attention_mask']
-                )
+                # 多卡模式下 last_hidden_state 和 attention_mask 可能在不同设备
+                hidden = outputs.last_hidden_state
+                attn_mask = batch_dict['attention_mask'].to(hidden.device)
+                embeddings = last_token_pool(hidden, attn_mask)
                 
                 # 第六步：L2 归一化（必须做！）
                 if self.normalize_embeddings:

@@ -5,6 +5,7 @@ from .repllama_encoder import RepLLaMAEncoder
 from .llama3_encoder import LLaMA31Encoder
 from .infx_encoder import INFXRetrieverEncoder
 from .gritlm_encoder import GritLMEncoder
+from .bge_encoder import BGEEncoder
 
 # 注册 E5-Mistral 编码器
 ModelFactory.register("e5-mistral-7b-instruct", E5MistralEncoder)
@@ -30,6 +31,24 @@ ModelFactory.register("infly/inf-retriever-v1-pro", INFXRetrieverEncoder)
 ModelFactory.register("GritLM/GritLM-7B", GritLMEncoder)
 ModelFactory.register("gritlm-7b", GritLMEncoder)
 
+# 注册 BGE 编码器
+ModelFactory.register("BAAI/bge-large-en-v1.5", BGEEncoder)
+ModelFactory.register("bge-large-en-v1.5", BGEEncoder)
+ModelFactory.register("BGE-large-en-v1.5", BGEEncoder)
+
+# 注册 BGE-M3 编码器 (多语言，无查询前缀)
+from .bge_m3_encoder import BGEM3Encoder
+ModelFactory.register("BAAI/bge-m3", BGEM3Encoder)
+ModelFactory.register("bge-m3", BGEM3Encoder)
+
+# 注册 BGE-base 编码器 (与 BGE-large 相同接口，查询前缀)
+ModelFactory.register("BAAI/bge-base-en-v1.5", BGEEncoder)
+ModelFactory.register("bge-base-en-v1.5", BGEEncoder)
+
+# 注册 BGE-small 编码器 (与 BGE-large 相同接口，查询前缀)
+ModelFactory.register("BAAI/bge-small-en-v1.5", BGEEncoder)
+ModelFactory.register("bge-small-en-v1.5", BGEEncoder)
+
 __all__ = [
     'BaseEncoder',
     'SentenceTransformerEncoder',
@@ -38,6 +57,7 @@ __all__ = [
     'LLaMA31Encoder',
     'INFXRetrieverEncoder',
     'GritLMEncoder',
+    'BGEEncoder',
     'ModelFactory',
     'DenseRetriever'
 ]

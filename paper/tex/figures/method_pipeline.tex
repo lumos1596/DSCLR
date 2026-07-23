@@ -55,18 +55,18 @@
   \tiny $\Rightarrow \widehat{S}^{bg}_{neg}$
 };
 \node[decision] (residual) at (3.95,-2.72) {
-  residual boundary\\[-1pt]
-  \tiny $R_{neg}=\sneg-\widehat{S}^{bg}_{neg}$\\[-1pt]
-  \tiny $\tau_q=\operatorname{med}+\lambda\operatorname{MAD}$
+  residual decision\\[-1pt]
+  \tiny $r_q=\sneg-\widehat{s}^{bg}_{n}$\\[-1pt]
+  \tiny $m_q=\lambda\operatorname{MAD}(r_q)$
 };
 \node[decision] (calib) at (6.55,-2.72) {
-  active-region calibration\\[-1pt]
+  local scale calibration\\[-1pt]
   \tiny $\mathcal{A}_q:o_q>0 \Rightarrow \alpha_q$\\[-1pt]
   \tiny $\mathcal{B}_q:o_q\le0 \Rightarrow \beta_q$
 };
 \node[final, minimum width=2.70cm] (compose) at (4.72,-3.92) {
   safety-gated decision score\\[-1pt]
-  \tiny $\sfinal=\sbase+\mathrm{reward}_{\beta_q,g_q}-\mathrm{penalty}_{\alpha_q,\tau_q}$
+  \tiny $\sfinal=\sbase+\beta_q\spos g_q-\alpha_q\operatorname{Softplus}(o_q)$
 };
 \node[stage, minimum width=1.12cm] (rank) at (7.82,-3.92) {Final\\Ranking};
 

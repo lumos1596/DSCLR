@@ -2,45 +2,50 @@ This is BibTeX, Version 0.99e (TeX Live 2026)
 Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
 The top-level auxiliary file: paper.aux
 The style file: plain.bst
+Illegal, another \bibstyle command---line 151 of file paper.aux
+ : \bibstyle
+ :          {plain}
+I'm skipping whatever remains of this command
 Database file #1: ../refs/references.bib
-You've used 30 entries,
+You've used 29 entries,
             2118 wiz_defined-function locations,
-            619 strings with 8915 characters,
-and the built_in function-call counts, 9180 in all, are:
-= -- 793
-> -- 659
-< -- 0
-+ -- 260
-- -- 230
-* -- 593
-:= -- 1686
-add.period$ -- 90
-call.type$ -- 30
-change.case$ -- 192
+            637 strings with 10694 characters,
+and the built_in function-call counts, 11829 in all, are:
+= -- 1031
+> -- 879
+< -- 8
++ -- 338
+- -- 309
+* -- 874
+:= -- 2035
+add.period$ -- 92
+call.type$ -- 29
+change.case$ -- 219
 chr.to.int$ -- 0
-cite$ -- 30
-duplicate$ -- 337
-empty$ -- 626
-format.name$ -- 230
-if$ -- 1818
+cite$ -- 29
+duplicate$ -- 419
+empty$ -- 779
+format.name$ -- 309
+if$ -- 2417
 int.to.chr$ -- 0
-int.to.str$ -- 30
-missing$ -- 29
-newline$ -- 153
-num.names$ -- 60
-pop$ -- 236
+int.to.str$ -- 29
+missing$ -- 28
+newline$ -- 147
+num.names$ -- 66
+pop$ -- 278
 preamble$ -- 1
-purify$ -- 162
+purify$ -- 190
 quote$ -- 0
-skip$ -- 231
+skip$ -- 300
 stack$ -- 0
-substring$ -- 150
-swap$ -- 40
-text.length$ -- 0
+substring$ -- 372
+swap$ -- 110
+text.length$ -- 8
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 120
+type$ -- 116
 warning$ -- 0
-while$ -- 60
-width$ -- 32
-write$ -- 302
+while$ -- 80
+width$ -- 31
+write$ -- 306
+(There was 1 error message)

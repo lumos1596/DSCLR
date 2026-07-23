@@ -2,158 +2,183 @@
 \providecommand\hyper@newdestlabel[2]{}
 \providecommand\HyField@AuxAddToFields[1]{}
 \providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{karpukhin2020dpr}
+\citation{instructgpt2022}
+\citation{flan2022}
+\citation{t02022}
+\citation{weller-etal-2025-followir}
+\citation{weller2024promptriever}
+\citation{zhuang2025infir}
+\citation{dualview2026}
 \citation{gao2023hyde}
 \citation{wang2023query2doc}
 \citation{li2025deepretrieval}
 \citation{raudaschl2024ragfusion}
-\citation{followir2024}
-\citation{followir2024}
-\citation{weller2024promptriever}
-\citation{dualview2026}
 \citation{deo2026}
+\citation{pokhrel2026negation}
+\citation{xu2025logical}
+\bibstyle{plain}
 \@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
 \newlabel{sec:introduction}{{1}{1}{Introduction}{section.1}{}}
-\citation{followir2024}
+\citation{instructor2022}
+\citation{tart2022}
+\citation{weller2024promptriever}
+\citation{zhuang2025infir}
+\citation{dualview2026}
+\citation{weller-etal-2025-followir}
+\citation{e5mistral2023}
+\citation{gritlm2024}
+\citation{mteb2022}
+\citation{beir2021}
 \citation{gao2023hyde}
 \citation{wang2023query2doc}
 \citation{raudaschl2024ragfusion}
 \citation{ma2023ragqr}
 \citation{li2025deepretrieval}
-\citation{followtable2026}
-\citation{instructgpt2022}
-\citation{flan2022}
-\citation{t02022}
-\citation{llama2023}
-\citation{groeneveld2024}
-\citation{instructor2022}
-\citation{tart2022}
-\citation{e5mistral2023}
-\citation{gritlm2024}
-\citation{bge2023}
-\citation{bge2023}
-\citation{mteb2022}
-\citation{beir2021}
-\citation{followir2024}
-\citation{followir2024}
-\citation{weller2024promptriever}
-\citation{zhuang2025infir}
-\citation{dualview2026}
-\citation{deo2024}
 \citation{deo2026}
-\citation{deo2026}
-\citation{negclip2022}
-\citation{coconeg2024}
+\citation{pokhrel2026negation}
+\citation{xu2025logical}
+\citation{hoveyda2026orlog}
 \@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{2}{section.2}\protected@file@percent }
 \newlabel{sec:related-work}{{2}{2}{Related Work}{section.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Query Rewriting and Semantic Enhancement}{2}{subsection.2.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Instruction-Following Retrieval}{2}{subsection.2.2}\protected@file@percent }
-\citation{followir2024}
-\citation{followir2024}
-\citation{followir2024}
-\citation{deo2024}
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Negation-Aware Retrieval}{3}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Supervised Instruction-Following Retriever Adaptation}{2}{subsection.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Training-Free Instruction Resolution}{2}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Constraint-Aware Retrieval}{2}{subsection.2.3}\protected@file@percent }
+\citation{platt1999probabilistic}
+\citation{guo2017temperature}
+\citation{conneau2018wordtranslation}
+\citation{faggioli2023query}
+\citation{wang2021pseudo}
+\citation{zhou2024batch}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Query-Local Score Calibration and Test-Time Adaptation}{3}{subsection.2.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {3}Method: DeIR-Dual}{3}{section.3}\protected@file@percent }
 \newlabel{sec:method}{{3}{3}{Method: DeIR-Dual}{section.3}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Problem Formulation}{3}{subsection.3.1}\protected@file@percent }
 \newlabel{sec:problem-formulation}{{3.1}{3}{Problem Formulation}{subsection.3.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Triple-Query Decomposition}{3}{subsection.3.2}\protected@file@percent }
-\newlabel{sec:dual-query-generation}{{3.2}{3}{Triple-Query Decomposition}{subsection.3.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Triple-Query Scoring Views}{3}{subsection.3.2}\protected@file@percent }
+\newlabel{sec:dual-query-generation}{{3.2}{3}{Triple-Query Scoring Views}{subsection.3.2}{}}
+\newlabel{eq:channel-scores}{{1}{3}{Triple-Query Scoring Views}{equation.1}{}}
 \citation{conneau2018wordtranslation}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Decision-Layer Score Composition}{4}{subsection.3.3}\protected@file@percent }
-\newlabel{sec:scoring-formula}{{3.3}{4}{Decision-Layer Score Composition}{subsection.3.3}{}}
-\newlabel{eq:channel-scores}{{1}{4}{Decision-Layer Score Composition}{equation.1}{}}
-\@writefile{toc}{\contentsline {subsubsection}{Background Leakage Estimation}{4}{section*.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Illustrative operational decomposition. $Q_{\text  {base}}$ preserves the complete request; $Q_{\text  {pos}}$ states what should qualify as relevant; and $Q_{\text  {minus}}$ describes only the content to exclude.}}{4}{table.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:decomposition-example}{{1}{4}{Illustrative operational decomposition. $\qbase $ preserves the complete request; $\qpos $ states what should qualify as relevant; and $\qminus $ describes only the content to exclude}{table.caption.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Query-Adaptive Exclusion Boundary}{4}{subsection.3.3}\protected@file@percent }
+\newlabel{sec:scoring-formula}{{3.3}{4}{Query-Adaptive Exclusion Boundary}{subsection.3.3}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Background Leakage Estimation}{4}{section*.2}\protected@file@percent }
 \newlabel{eq:base-zscore}{{2}{4}{Background Leakage Estimation}{equation.2}{}}
 \newlabel{eq:query-overlap}{{3}{4}{Background Leakage Estimation}{equation.3}{}}
 \newlabel{eq:bg-estimate}{{4}{4}{Background Leakage Estimation}{equation.4}{}}
-\@writefile{toc}{\contentsline {subsubsection}{Residual Exclusion Penalty}{4}{section*.2}\protected@file@percent }
-\newlabel{eq:residual}{{5}{4}{Residual Exclusion Penalty}{equation.5}{}}
-\newlabel{eq:mad-margin}{{6}{4}{Residual Exclusion Penalty}{equation.6}{}}
-\newlabel{eq:residual-penalty}{{7}{4}{Residual Exclusion Penalty}{equation.7}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Residual Exclusion Boundary}{4}{section*.3}\protected@file@percent }
+\newlabel{eq:residual}{{5}{4}{Residual Exclusion Boundary}{equation.5}{}}
+\newlabel{eq:mad-margin}{{6}{4}{Residual Exclusion Boundary}{equation.6}{}}
+\newlabel{eq:residual-penalty}{{7}{4}{Residual Exclusion Boundary}{equation.7}{}}
 \citation{platt1999probabilistic}
 \citation{guo2017temperature}
-\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Overview of DeIR-Dual{}. A query and its instruction are decomposed by an LLM into three queries ($Q_{\text  {base}}$, $Q_{\text  {pos}}$, $Q_{\text  {minus}}$), independently encoded, and scored via the decision-layer mechanism in Eq. \ref {eq:final}. The scorer first estimates background leakage in the negative channel, extracts a residual exclusion signal, and then applies a residual penalty together with a safety-gated positive reward. This allows conditional suppression of documents whose negative residual exceeds the background estimate while preserving rankings for documents supported by the base and positive channels.}}{5}{figure.caption.4}\protected@file@percent }
-\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
-\newlabel{fig:pipeline}{{1}{5}{Overview of \method {}. A query and its instruction are decomposed by an LLM into three queries ($\qbase $, $\qpos $, $\qminus $), independently encoded, and scored via the decision-layer mechanism in Eq. \ref {eq:final}. The scorer first estimates background leakage in the negative channel, extracts a residual exclusion signal, and then applies a residual penalty together with a safety-gated positive reward. This allows conditional suppression of documents whose negative residual exceeds the background estimate while preserving rankings for documents supported by the base and positive channels}{figure.caption.4}{}}
-\@writefile{toc}{\contentsline {subsubsection}{Residual-Normalized Safety Gate}{5}{section*.3}\protected@file@percent }
-\newlabel{eq:safety}{{8}{5}{Residual-Normalized Safety Gate}{equation.8}{}}
-\newlabel{eq:final}{{9}{5}{Residual-Normalized Safety Gate}{equation.9}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {4}Inference-Time Score Calibration}{5}{section.4}\protected@file@percent }
-\newlabel{sec:parameter-derivation}{{4}{5}{Inference-Time Score Calibration}{section.4}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Candidate-Set Score Calibration}{5}{subsection.4.1}\protected@file@percent }
-\newlabel{sec:scale-alignment}{{4.1}{5}{Candidate-Set Score Calibration}{subsection.4.1}{}}
-\citation{followir2024}
-\citation{followir2024}
-\citation{followir2024}
-\newlabel{eq:residual-excess}{{10}{6}{Candidate-Set Score Calibration}{equation.10}{}}
-\newlabel{eq:exceeding-set}{{11}{6}{Candidate-Set Score Calibration}{equation.11}{}}
-\newlabel{eq:alpha}{{12}{6}{Candidate-Set Score Calibration}{equation.12}{}}
-\newlabel{eq:safe-set}{{13}{6}{Candidate-Set Score Calibration}{equation.13}{}}
-\newlabel{eq:beta}{{14}{6}{Candidate-Set Score Calibration}{equation.14}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Residual Margin and Gate Scale}{6}{subsection.4.2}\protected@file@percent }
-\newlabel{sec:residual-calibration}{{4.2}{6}{Residual Margin and Gate Scale}{subsection.4.2}{}}
-\newlabel{eq:residual-margin-scale}{{15}{6}{Residual Margin and Gate Scale}{equation.15}{}}
-\newlabel{eq:residual-gate-scale}{{16}{6}{Residual Margin and Gate Scale}{equation.16}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Label-Free Inference-Time Derivation}{6}{subsection.4.3}\protected@file@percent }
-\newlabel{sec:train-vs-test}{{4.3}{6}{Label-Free Inference-Time Derivation}{subsection.4.3}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Performance of existing retrieval methods and DeIR-Dual on the FollowIR benchmark \cite  {followir2024}. All metrics are percentages ($\times 100$). DeIR-Dual achieves the highest News21 nDCG, Core17 MAP, average score, and average p-MRR without any fine-tuning.}}{7}{table.caption.5}\protected@file@percent }
-\newlabel{tab:followir-background}{{1}{7}{Performance of existing retrieval methods and DeIR-Dual on the FollowIR benchmark \cite {followir2024}. All metrics are percentages ($\times 100$). DeIR-Dual achieves the highest News21 nDCG, Core17 MAP, average score, and average p-MRR without any fine-tuning}{table.caption.5}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Comparison of DeIR-Dual{} with ten query rewriting methods on the FollowIR benchmark. DeIR-Dual{} achieves the highest mean p-MRR (14.9) and Score (29.0), outperforming all baselines by 10.6$\times $ in p-MRR (vs.\ HyDE) and 50.6$\times $ (vs.\ DeepRetrieval). All metrics are percentages ($\times 100$).}}{7}{table.caption.6}\protected@file@percent }
-\newlabel{tab:followir-main}{{2}{7}{Comparison of \method {} with ten query rewriting methods on the FollowIR benchmark. \method {} achieves the highest mean p-MRR (14.9) and Score (29.0), outperforming all baselines by 10.6$\times $ in p-MRR (vs.\ HyDE) and 50.6$\times $ (vs.\^^MDeepRetrieval). All metrics are percentages ($\times 100$)}{table.caption.6}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {5}Experiments}{7}{section.5}\protected@file@percent }
-\newlabel{sec:experiments}{{5}{7}{Experiments}{section.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}FollowIR Benchmark Background}{7}{subsection.5.1}\protected@file@percent }
-\newlabel{sec:followir-background}{{5.1}{7}{FollowIR Benchmark Background}{subsection.5.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Main Results: FollowIR Benchmark}{7}{subsection.5.2}\protected@file@percent }
-\newlabel{sec:main-results}{{5.2}{7}{Main Results: FollowIR Benchmark}{subsection.5.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Cross-Dataset Validation}{7}{subsection.5.3}\protected@file@percent }
-\newlabel{sec:cross-dataset}{{5.3}{7}{Cross-Dataset Validation}{subsection.5.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces DeIR-Dual{} uses $Q_{\text  {base}}$ for first-stage retrieval and keeps the retriever frozen. Three scoring views provide contextual, affirmative, and exclusion evidence for the same top-$K$ candidate set. The decision layer removes background-induced negative similarity, separately forms a residual penalty and a safety gate, and calibrates their scales from unlabeled candidate-set scores.}}{5}{figure.caption.5}\protected@file@percent }
+\newlabel{fig:pipeline}{{1}{5}{\method {} uses $\qbase $ for first-stage retrieval and keeps the retriever frozen. Three scoring views provide contextual, affirmative, and exclusion evidence for the same top-$K$ candidate set. The decision layer removes background-induced negative similarity, separately forms a residual penalty and a safety gate, and calibrates their scales from unlabeled candidate-set scores}{figure.caption.5}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Safety-Gated Positive Reward}{5}{section*.4}\protected@file@percent }
+\newlabel{eq:safety}{{8}{5}{Safety-Gated Positive Reward}{equation.8}{}}
+\newlabel{eq:final}{{9}{5}{Safety-Gated Positive Reward}{equation.9}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Inference-Time Score Calibration}{5}{subsection.3.4}\protected@file@percent }
+\newlabel{sec:parameter-derivation}{{3.4}{5}{Inference-Time Score Calibration}{subsection.3.4}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Candidate-Set Score Calibration}{5}{section*.6}\protected@file@percent }
+\newlabel{sec:scale-alignment}{{3.4}{5}{Candidate-Set Score Calibration}{section*.6}{}}
+\newlabel{eq:residual-excess}{{10}{5}{Candidate-Set Score Calibration}{equation.10}{}}
+\newlabel{eq:exceeding-set}{{11}{5}{Candidate-Set Score Calibration}{equation.11}{}}
+\citation{weller-etal-2025-followir}
+\citation{xu2025logical}
+\citation{xu2025logical}
+\citation{deo2026}
+\newlabel{eq:penalty-magnitude}{{12}{6}{Candidate-Set Score Calibration}{equation.12}{}}
+\newlabel{eq:alpha}{{13}{6}{Candidate-Set Score Calibration}{equation.13}{}}
+\newlabel{eq:safe-set}{{14}{6}{Candidate-Set Score Calibration}{equation.14}{}}
+\newlabel{eq:beta}{{15}{6}{Candidate-Set Score Calibration}{equation.15}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Experiments}{6}{section.4}\protected@file@percent }
+\newlabel{sec:experiments}{{4}{6}{Experiments}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Experimental Setup}{6}{subsection.4.1}\protected@file@percent }
+\newlabel{sec:evaluation-overview}{{4.1}{6}{Experimental Setup}{subsection.4.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Main Results}{6}{subsection.4.2}\protected@file@percent }
+\newlabel{sec:main-results}{{4.2}{6}{Main Results}{subsection.4.2}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Instruction Following on FollowIR}{6}{section*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Portability Across Frozen Retrievers}{6}{section*.9}\protected@file@percent }
+\newlabel{sec:cross-retriever-main}{{4.2}{6}{Portability Across Frozen Retrievers}{section*.9}{}}
+\citation{xu2025logical}
+\citation{deo2026}
+\citation{xu2025logical}
+\citation{deo2026}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Representative FollowIR comparison. Promptriever$^{\dagger }$ is a supervised instruction-trained reference; the other non-base baselines are inference-time methods. All metrics are percentages ($\times 100$); the complete baseline table is in the appendix.}}{7}{table.caption.8}\protected@file@percent }
+\newlabel{tab:followir-main}{{2}{7}{Representative FollowIR comparison. Promptriever$^{\dagger }$ is a supervised instruction-trained reference; the other non-base baselines are inference-time methods. All metrics are percentages ($\times 100$); the complete baseline table is in the appendix}{table.caption.8}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Cross-retriever results on FollowIR. Every row uses the same decomposer, candidate depth, and fixed $\lambda ,\kappa $; only $\alpha _q,\beta _q$ are derived from the current candidate set.}}{7}{table.caption.10}\protected@file@percent }
+\newlabel{tab:cross-retriever}{{3}{7}{Cross-retriever results on FollowIR. Every row uses the same decomposer, candidate depth, and fixed $\lambda ,\kappa $; only $\alpha _q,\beta _q$ are derived from the current candidate set}{table.caption.10}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Transfer to NegConstraint \cite  {xu2025logical}. DEO$^{\dagger }$ is the reported BGE-M3 result from its arXiv preprint \cite  {deo2026}; it is an embedding-space reference rather than a matched reranking comparison. All scores are percentages ($\times 100$).}}{7}{table.caption.12}\protected@file@percent }
+\newlabel{tab:negation-transfer}{{4}{7}{Transfer to NegConstraint \cite {xu2025logical}. DEO$^{\dagger }$ is the reported BGE-M3 result from its arXiv preprint \cite {deo2026}; it is an embedding-space reference rather than a matched reranking comparison. All scores are percentages ($\times 100$)}{table.caption.12}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Transfer to Negation-Sensitive Benchmarks}{7}{section*.11}\protected@file@percent }
+\newlabel{sec:negation-benchmarks}{{4.2}{7}{Transfer to Negation-Sensitive Benchmarks}{section*.11}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Ablation Study}{7}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:mechanism-analysis}{{4.3}{7}{Ablation Study}{subsection.4.3}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Compact FollowIR ablation. The first block contrasts competing exclusion mechanisms; the second changes only the selection of $\alpha ,\beta $. $^{\ddagger }$Oracle tuning is an analysis upper bound, not a deployable method. All metrics are percentages ($\times 100$).}}{8}{table.caption.13}\protected@file@percent }
+\newlabel{tab:ablation-main}{{5}{8}{Compact FollowIR ablation. The first block contrasts competing exclusion mechanisms; the second changes only the selection of $\alpha ,\beta $. $^{\ddagger }$Oracle tuning is an analysis upper bound, not a deployable method. All metrics are percentages ($\times 100$)}{table.caption.13}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Complete FollowIR comparison for inference-time baselines. All metrics are percentages ($\times 100$).}}{8}{table.caption.14}\protected@file@percent }
+\newlabel{tab:followir-full}{{6}{8}{Complete FollowIR comparison for inference-time baselines. All metrics are percentages ($\times 100$)}{table.caption.14}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Conclusion and Limitations}{8}{section.5}\protected@file@percent }
+\newlabel{sec:conclusion}{{5}{8}{Conclusion and Limitations}{section.5}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Complete FollowIR Comparison}{8}{section.A}\protected@file@percent }
+\newlabel{app:followir-full}{{A}{8}{Complete FollowIR Comparison}{section.A}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Per-collection exclusion-mechanism ablation on FollowIR.}}{9}{table.caption.15}\protected@file@percent }
+\newlabel{tab:ablation-mechanism-full}{{7}{9}{Per-collection exclusion-mechanism ablation on FollowIR}{table.caption.15}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Per-collection calibration ablation on FollowIR.}}{9}{table.caption.16}\protected@file@percent }
+\newlabel{tab:ablation-calibration-full}{{8}{9}{Per-collection calibration ablation on FollowIR}{table.caption.16}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Diagnostic ablations for secondary design choices. The table keeps the same frozen retriever and candidate pool as Table~\ref {tab:ablation-main}.}}{9}{table.caption.17}\protected@file@percent }
+\newlabel{tab:diagnostic-ablation}{{9}{9}{Diagnostic ablations for secondary design choices. The table keeps the same frozen retriever and candidate pool as Table~\ref {tab:ablation-main}}{table.caption.17}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Sensitivity, efficiency, and robustness analyses. \textnormal  {TBD} entries are explicit placeholders for matched evaluation runs.}}{9}{table.caption.18}\protected@file@percent }
+\newlabel{tab:sensitivity-efficiency}{{10}{9}{Sensitivity, efficiency, and robustness analyses. \textnormal {TBD} entries are explicit placeholders for matched evaluation runs}{table.caption.18}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {B}Additional Ablations and Sensitivity}{9}{section.B}\protected@file@percent }
+\newlabel{app:additional-ablations}{{B}{9}{Additional Ablations and Sensitivity}{section.B}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {C}Standard Retrieval Preservation}{9}{section.C}\protected@file@percent }
+\newlabel{app:standard-retrieval}{{C}{9}{Standard Retrieval Preservation}{section.C}{}}
+\citation{xu2025logical}
+\citation{deo2026}
+\citation{xu2025logical}
+\citation{deo2026}
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces Standard-retrieval preservation on a representative BEIR subset (TREC-COVID, NFCorpus, FiQA-2018, ArguAna, SciFact, and Quora). A neutral instruction isolates input-format effects; the final condition tests whether DeIR-Dual{} changes ordinary ranking when no exclusion is active. \textnormal  {TBD} entries are to be filled from matched runs.}}{10}{table.caption.19}\protected@file@percent }
+\newlabel{tab:standard-retrieval}{{11}{10}{Standard-retrieval preservation on a representative BEIR subset (TREC-COVID, NFCorpus, FiQA-2018, ArguAna, SciFact, and Quora). A neutral instruction isolates input-format effects; the final condition tests whether \method {} changes ordinary ranking when no exclusion is active. \textnormal {TBD} entries are to be filled from matched runs}{table.caption.19}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces Formulation-level NegConstraint results. ACL reference results are taken from the NegConstraint paper \cite  {xu2025logical}. DEO results are total-only numbers reported in its arXiv preprint \cite  {deo2026}. All scores are percentages ($\times 100$).}}{10}{table.caption.20}\protected@file@percent }
+\newlabel{tab:negconstraint-full}{{12}{10}{Formulation-level NegConstraint results. ACL reference results are taken from the NegConstraint paper \cite {xu2025logical}. DEO results are total-only numbers reported in its arXiv preprint \cite {deo2026}. All scores are percentages ($\times 100$)}{table.caption.20}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {D}Additional NegConstraint Results}{10}{section.D}\protected@file@percent }
+\newlabel{app:negconstraint}{{D}{10}{Additional NegConstraint Results}{section.D}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {E}Qualitative Analysis}{10}{section.E}\protected@file@percent }
+\newlabel{app:qualitative}{{E}{10}{Qualitative Analysis}{section.E}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {F}Implementation Details for Decomposition and Calibration}{10}{section.F}\protected@file@percent }
+\newlabel{app:implementation}{{F}{10}{Implementation Details for Decomposition and Calibration}{section.F}{}}
 \bibstyle{plain}
 \bibdata{../refs/references}
-\bibcite{amati2002dfr}{1}
-\bibcite{tart2022}{2}
-\bibcite{conneau2018wordtranslation}{3}
+\bibcite{tart2022}{1}
+\bibcite{conneau2018wordtranslation}{2}
+\bibcite{faggioli2023query}{3}
 \bibcite{gao2023hyde}{4}
-\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Distribution of $\cos (\mathbf  {h}_{\text  {base}}, \mathbf  {h}_{\text  {neg}})$ across three scenarios. NegConstraint shows orthogonality (penalty effective), while ComLQ (structural entanglement) and NQ (generative entanglement) exhibit significant overlap, causing penalty failure.}}{8}{figure.caption.7}\protected@file@percent }
-\newlabel{fig:semantic-entanglement}{{2}{8}{Distribution of $\cos (\mathbf {h}_{\text {base}}, \mathbf {h}_{\text {neg}})$ across three scenarios. NegConstraint shows orthogonality (penalty effective), while ComLQ (structural entanglement) and NQ (generative entanglement) exhibit significant overlap, causing penalty failure}{figure.caption.7}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}BEIR Generalization}{8}{subsection.5.4}\protected@file@percent }
-\newlabel{sec:beir-generalization}{{5.4}{8}{BEIR Generalization}{subsection.5.4}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Ablation Study}{8}{subsection.5.5}\protected@file@percent }
-\newlabel{sec:ablation}{{5.5}{8}{Ablation Study}{subsection.5.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.6}Encoder-Agnostic Analysis}{8}{subsection.5.6}\protected@file@percent }
-\newlabel{sec:encoder-agnostic}{{5.6}{8}{Encoder-Agnostic Analysis}{subsection.5.6}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {6}Analysis: Semantic Entanglement}{8}{section.6}\protected@file@percent }
-\newlabel{sec:analysis}{{6}{8}{Analysis: Semantic Entanglement}{section.6}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Definition and Variants}{8}{subsection.6.1}\protected@file@percent }
-\newlabel{sec:entanglement-definition}{{6.1}{8}{Definition and Variants}{subsection.6.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Diagnostic Analysis}{8}{subsection.6.2}\protected@file@percent }
-\newlabel{sec:entanglement-diagnosis}{{6.2}{8}{Diagnostic Analysis}{subsection.6.2}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {7}Conclusion and Limitations}{8}{section.7}\protected@file@percent }
-\newlabel{sec:conclusion}{{7}{8}{Conclusion and Limitations}{section.7}{}}
-\bibcite{groeneveld2024}{5}
-\bibcite{guo2017temperature}{6}
-\bibcite{followir2024}{7}
-\bibcite{li2025deepretrieval}{8}
-\bibcite{ma2023ragqr}{9}
-\bibcite{gritlm2024}{10}
-\bibcite{mteb2022}{11}
-\bibcite{instructgpt2022}{12}
-\bibcite{platt1999probabilistic}{13}
-\bibcite{raudaschl2024ragfusion}{14}
-\bibcite{t02022}{15}
-\bibcite{instructor2022}{16}
-\bibcite{coconeg2024}{17}
-\bibcite{deo2024}{18}
-\bibcite{deo2026}{19}
-\bibcite{followtable2026}{20}
-\bibcite{beir2021}{21}
-\bibcite{llama2023}{22}
-\bibcite{e5mistral2023}{23}
-\bibcite{wang2023query2doc}{24}
-\bibcite{flan2022}{25}
-\bibcite{weller2024promptriever}{26}
-\bibcite{bge2023}{27}
-\bibcite{negclip2022}{28}
-\bibcite{dualview2026}{29}
-\bibcite{zhuang2025infir}{30}
-\gdef \@abspage@last{10}
+\bibcite{guo2017temperature}{5}
+\bibcite{hoveyda2026orlog}{6}
+\bibcite{karpukhin2020dpr}{7}
+\bibcite{deo2026}{8}
+\bibcite{li2025deepretrieval}{9}
+\bibcite{ma2023ragqr}{10}
+\bibcite{gritlm2024}{11}
+\bibcite{mteb2022}{12}
+\bibcite{instructgpt2022}{13}
+\bibcite{platt1999probabilistic}{14}
+\bibcite{pokhrel2026negation}{15}
+\bibcite{raudaschl2024ragfusion}{16}
+\bibcite{t02022}{17}
+\bibcite{instructor2022}{18}
+\bibcite{beir2021}{19}
+\bibcite{e5mistral2023}{20}
+\bibcite{wang2021pseudo}{21}
+\bibcite{wang2023query2doc}{22}
+\bibcite{flan2022}{23}
+\bibcite{weller-etal-2025-followir}{24}
+\bibcite{weller2024promptriever}{25}
+\bibcite{xu2025logical}{26}
+\bibcite{dualview2026}{27}
+\bibcite{zhou2024batch}{28}
+\bibcite{zhuang2025infir}{29}
+\gdef \@abspage@last{12}

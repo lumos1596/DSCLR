@@ -55,12 +55,21 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
         boundary_mode: str = "semantic",
         residual_margin_scale: float = 1.0,
         safety_kappa: float = 0.0,
+        r2_threshold: float = 0.3,
+        huber_delta: float = 1.345,
+        r2_alpha_boost: float = 0.0,
+        target_at_risk: float = 0.0,
+        r2_tar_scale: float = 0.0,
+        blend_weight: float = 1.0,
+        regression_type: str = "huber",
         beta_raw: bool = False,
+        quantile_level: float = 0.95,
         per_query_ab: bool = False,
         beta_derive_mode: str = "max_mean",
         ab_clip_alpha: Tuple[float, float] = (0.05, 5.0),
         ab_clip_beta: Tuple[float, float] = (0.05, 5.0),
         ablation_mode: str = "full",
+        rerank_top_k: int = 0,
         device: str = "auto",
         **kwargs,
     ):
@@ -69,12 +78,21 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
         self.boundary_mode = boundary_mode
         self.residual_margin_scale = residual_margin_scale
         self.safety_kappa = safety_kappa
+        self.r2_threshold = r2_threshold
+        self.huber_delta = huber_delta
+        self.r2_alpha_boost = r2_alpha_boost
+        self.target_at_risk = target_at_risk
+        self.r2_tar_scale = r2_tar_scale
+        self.blend_weight = blend_weight
+        self.regression_type = regression_type
+        self.quantile_level = quantile_level
         self.per_query_ab = per_query_ab
         self.beta_raw = beta_raw
         self.beta_derive_mode = beta_derive_mode
         self.ab_clip_alpha = ab_clip_alpha
         self.ab_clip_beta = ab_clip_beta
         self.ablation_mode = ablation_mode
+        self.rerank_top_k = rerank_top_k
         self._per_query_alphas: List[float] = []
         self._per_query_betas: List[float] = []
         self._per_query_stats: List[Dict[str, Any]] = []
@@ -272,12 +290,25 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
             stats["ablation_mode"] = self.ablation_mode
             return s_final, 0.0, stats
 
-        if self.boundary_mode == "residual_bg":
+        if self.boundary_mode in ("residual_bg", "regression_bg"):
+            # Determine which boundary_mode string to pass to residual_boundary.py
+            rb_mode = "regression_bg" if self.boundary_mode == "regression_bg" else "cos_transfer"
+            # compute_r2=True when r2_alpha_boost > 0 to get R² for penalty modulation
+            _compute_r2 = self.r2_alpha_boost > 0 or self.boundary_mode == "regression_bg" or self.r2_tar_scale > 0
             boundary = compute_background_residual_boundary(
                 s_base=s_base,
                 s_neg=s_neg,
                 cos_qbase_qneg=cos_qbase_qneg,
                 margin_scale=self.residual_margin_scale,
+                boundary_mode=rb_mode,
+                r2_threshold=self.r2_threshold,
+                huber_delta=self.huber_delta,
+                compute_r2=_compute_r2,
+                target_at_risk=self.target_at_risk,
+                r2_tar_scale=self.r2_tar_scale,
+                blend_weight=self.blend_weight,
+                regression_type=self.regression_type,
+                quantile_level=self.quantile_level,
             )
             # 惩罚项：残差超出 MAD 阈值的部分，不加 delta
             overflow = boundary.overflow  # R_neg - m_q
@@ -290,13 +321,24 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
             #   R_neg = 0 → safety = 0.5（负向证据恰等于背景泄漏预期）
             #   R_neg = MAD → safety = 1 - sigmoid(κ)
             # κ = 0: 回退到传统 τ = cos(Q_base, Q_neg) + δ
+            # R²-gated kappa: high R² → sharper safety (boundary is reliable)
+            #                 low R² → smoother safety (boundary is uncertain)
+            _r2 = boundary.stats.get("boundary_r2", 0.0)
+            if self.r2_tar_scale > 0 and _r2 > 0:
+                # R² modulates kappa: high R² → boundary reliable → smoother safety
+                # effective_kappa = kappa / (1 + r2_kappa_scale * R²)
+                effective_kappa = self.safety_kappa / (1.0 + self.r2_tar_scale * _r2)
+            else:
+                effective_kappa = self.safety_kappa
             tau = cos_qbase_qneg + delta
-            if self.safety_kappa > 0 and boundary.mad > 1e-8:
+            if effective_kappa > 0 and boundary.mad > 1e-8:
                 safety = 1.0 - torch.sigmoid(
-                    boundary.residual / boundary.mad * self.safety_kappa
+                    boundary.residual / boundary.mad * effective_kappa
                 )
                 stats["safety_mode"] = "residual_mad"
-                stats["safety_kappa"] = self.safety_kappa
+                stats["safety_kappa"] = effective_kappa
+                stats["safety_kappa_base"] = self.safety_kappa
+                stats["safety_kappa_r2"] = _r2
                 stats["residual_mad"] = boundary.mad
             else:
                 safety = 1.0 - torch.sigmoid((s_neg - tau) * self.t_safety)
@@ -334,6 +376,14 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
                         safety[safe_mask],
                         beta,
                     )
+            # R²-gated alpha boost: when R² is high, overflow is more trustworthy,
+            # so we can more confidently penalize. alpha_eff = alpha * (1 + r2_alpha_boost * R²)
+            if self.r2_alpha_boost > 0:
+                query_r2 = boundary.stats.get("boundary_r2", 0.0) if hasattr(boundary, 'stats') else 0.0
+                alpha_before = alpha
+                alpha = alpha * (1.0 + self.r2_alpha_boost * query_r2)
+                stats["r2_alpha_boost"] = self.r2_alpha_boost
+                stats["alpha_q_before_boost"] = alpha_before
             alpha = self._clip(alpha, self.ab_clip_alpha)
             beta = self._clip(beta, self.ab_clip_beta)
             self._per_query_alphas.append(alpha)
@@ -417,15 +467,28 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
             s_r = S_req[q_idx].index_select(0, idx_tensor)
             s_n = S_neg[q_idx].index_select(0, idx_tensor)
 
+            # rerank_top_k: 只对 S_base top-K 的候选文档施加奖惩
+            if self.rerank_top_k > 0 and self.rerank_top_k < s_b.numel():
+                topk_values, topk_local = torch.topk(s_b, self.rerank_top_k)
+                rerank_idx = idx_tensor[topk_local]
+                s_b_sub = s_b[topk_local]
+                s_r_sub = s_r[topk_local]
+                s_n_sub = s_n[topk_local]
+            else:
+                rerank_idx = idx_tensor
+                s_b_sub = s_b
+                s_r_sub = s_r
+                s_n_sub = s_n
+
             has_req = bool(has_req_mask[q_idx].item() > 0)
             has_neg = bool(has_neg_mask[q_idx].item() > 0)
             cos_val = float(cos_qbase_qneg[q_idx].item())
             self._current_qid = qid
 
             s_final_local, avg_penalty, _stats = self._score_query_dual_v2(
-                s_base=s_b,
-                s_req=s_r,
-                s_neg=s_n,
+                s_base=s_b_sub,
+                s_req=s_r_sub,
+                s_neg=s_n_sub,
                 cos_qbase_qneg=cos_val,
                 has_req=has_req,
                 has_neg=has_neg,
@@ -435,7 +498,7 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
             )
 
             s_final_local = s_final_local.to(dtype=S_final.dtype)
-            S_final[q_idx, idx_tensor] = s_final_local
+            S_final[q_idx, rerank_idx] = s_final_local
             penalty_scores[q_idx] = avg_penalty
 
         return S_final, penalty_scores
@@ -743,6 +806,14 @@ class DeIRDualV2Evaluator(DSCLREvaluatorEngine):
                 "beta_derive_mode": self.beta_derive_mode,
                 "ab_clip_alpha": self.ab_clip_alpha,
                 "ab_clip_beta": self.ab_clip_beta,
+                "r2_threshold": self.r2_threshold,
+                "huber_delta": self.huber_delta,
+                "r2_alpha_boost": self.r2_alpha_boost,
+                "target_at_risk": self.target_at_risk,
+                "r2_tar_scale": self.r2_tar_scale,
+                "blend_weight": self.blend_weight,
+                "regression_type": self.regression_type,
+                "quantile_level": self.quantile_level,
             },
             "timestamp": datetime.now().isoformat(),
             "best_params": best_params,
@@ -800,10 +871,19 @@ def run_deir_dual_v2(
     boundary_mode: str = "semantic",
     residual_margin_scale: float = 1.0,
     safety_kappa: float = 0.0,
+    r2_threshold: float = 0.3,
+    huber_delta: float = 1.345,
+    r2_alpha_boost: float = 0.0,
+    target_at_risk: float = 0.0,
+    r2_tar_scale: float = 0.0,
+    blend_weight: float = 1.0,
+    regression_type: str = "huber",
+    quantile_level: float = 0.95,
     beta_raw: bool = False,
     per_query_ab: bool = False,
     beta_derive_mode: str = "max_mean",
     ablation_mode: str = "full",
+    rerank_top_k: int = 0,
     use_cache: bool = True,
     device: str = "auto",
     batch_size: int = 64,
@@ -823,10 +903,19 @@ def run_deir_dual_v2(
         boundary_mode=boundary_mode,
         residual_margin_scale=residual_margin_scale,
         safety_kappa=safety_kappa,
+        r2_threshold=r2_threshold,
+        huber_delta=huber_delta,
+        r2_alpha_boost=r2_alpha_boost,
+        target_at_risk=target_at_risk,
+        r2_tar_scale=r2_tar_scale,
+        blend_weight=blend_weight,
+        regression_type=regression_type,
+        quantile_level=quantile_level,
         beta_raw=beta_raw,
         per_query_ab=per_query_ab,
         beta_derive_mode=beta_derive_mode,
         ablation_mode=ablation_mode,
+        rerank_top_k=rerank_top_k,
         use_cache=use_cache,
         device=device,
         batch_size=batch_size,
@@ -854,12 +943,32 @@ if __name__ == "__main__":
 
     parser.add_argument("--t_safety", type=float, default=20.0)
     parser.add_argument("--boundary_mode", type=str, default="semantic",
-                        choices=["semantic", "residual_bg"],
-                        help="semantic=τ=cos(Qbase,Qneg)+δ; residual_bg=background-calibrated residual boundary")
+                        choices=["semantic", "residual_bg", "regression_bg"],
+                        help="semantic=τ=cos(Qbase,Qneg)+δ; residual_bg=background-calibrated residual boundary; "
+                             "regression_bg=Huber regression boundary when R²>r2_threshold, else cos_transfer fallback")
     parser.add_argument("--residual_margin_scale", type=float, default=1.0,
                         help="MAD multiplier for residual_bg boundary margin")
     parser.add_argument("--safety_kappa", type=float, default=0.0,
                         help="Residual-based safety gate sharpness (0=traditional τ, >0=MAD-normalized residual)")
+    parser.add_argument("--r2_threshold", type=float, default=0.3,
+                        help="Minimum R² to use regression boundary (regression_bg mode only)")
+    parser.add_argument("--huber_delta", type=float, default=1.345,
+                        help="Huber loss delta for regression_bg boundary mode")
+    parser.add_argument("--r2_alpha_boost", type=float, default=0.0,
+                        help="Boost alpha by (1 + r2_alpha_boost * R²). "
+                             "When > 0, queries with high R² get stronger penalty. "
+                             "Only effective with boundary_mode=residual_bg and per_query_ab=true")
+    parser.add_argument("--target_at_risk", type=float, default=0.0,
+                        help="Base target at-risk ratio. With r2_tar_scale>0, effective_tar = tar * (1 + r2_tar_scale * R^2)")
+    parser.add_argument("--r2_tar_scale", type=float, default=0.0,
+                        help="R^2 scaling for per-query target_at_risk: effective_tar = tar * (1 + scale * R^2). High R^2 queries get more aggressive boundaries")
+    parser.add_argument("--blend_weight", type=float, default=1.0,
+                        help="Blend weight for regression vs cos_transfer boundary (1.0=pure regression, 0.0=pure cos_transfer)")
+    parser.add_argument("--regression_type", type=str, default="huber",
+                        choices=["huber", "ols", "quantile"],
+                        help="Regression type: huber (robust), ols (sensitive to outliers), quantile (direct upper quantile)")
+    parser.add_argument("--quantile_level", type=float, default=0.95,
+                        help="Quantile level for quantile regression (default 0.95)")
     parser.add_argument("--beta_raw", type=str, default="false",
                         help="If true, derive β from raw S_req without safety (V8.6)")
     parser.add_argument("--per_query_ab", type=str, default="false",
@@ -872,6 +981,9 @@ if __name__ == "__main__":
                         help="Ablation: full=complete method, base_only=S_base only, "
                              "no_pos=w/o positive refinement, no_neg=w/o negative residual branch, "
                              "no_safety=w/o safety gate, linear=linear fusion")
+    parser.add_argument("--rerank_top_k", type=int, default=0,
+                        help="Only apply reward/penalty to top-K candidates by S_base. "
+                             "0 means apply to all candidates (default behavior).")
 
     parser.add_argument("--use_cache", type=str, default="true")
     parser.add_argument("--device", type=str, default="auto")
@@ -896,10 +1008,19 @@ if __name__ == "__main__":
         boundary_mode=args.boundary_mode,
         residual_margin_scale=args.residual_margin_scale,
         safety_kappa=args.safety_kappa,
+        r2_threshold=args.r2_threshold,
+        huber_delta=args.huber_delta,
+        r2_alpha_boost=args.r2_alpha_boost,
+        target_at_risk=args.target_at_risk,
+        r2_tar_scale=args.r2_tar_scale,
+        blend_weight=args.blend_weight,
+        regression_type=args.regression_type,
+        quantile_level=args.quantile_level,
         beta_raw=args.beta_raw.lower() == "true",
         per_query_ab=args.per_query_ab.lower() == "true",
         beta_derive_mode=args.beta_derive_mode,
         ablation_mode=args.ablation_mode,
+        rerank_top_k=args.rerank_top_k,
         use_cache=use_cache,
         device=args.device,
         batch_size=args.batch_size,

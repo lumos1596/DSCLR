@@ -1,55 +1,54 @@
 \begin{thebibliography}{10}
 
-\bibitem{amati2002dfr}
-Gianni Amati and Cornelis~Joost Van~Rijsbergen.
-\newblock Probabilistic models of information retrieval based on measuring the
-  divergence from randomness.
-\newblock {\em ACM Transactions on Information Systems (TOIS)}, 2002.
-
 \bibitem{tart2022}
 Akari Asai et~al.
 \newblock Task-aware retrieval with instructions.
 \newblock In {\em arXiv preprint arXiv:2211.09260}, 2022.
 
 \bibitem{conneau2018wordtranslation}
-Alexis Conneau, Guillaume Lample, Marc'Aurelio Ranzato, Ludovic Denoyer, and
-  Herv{\'e} J{\'e}gou.
+Alexis Conneau, Guillaume Lample, Marc'Aurelio Ranzato, Ludovic Denoyer, and Herv{\'e} J{\'e}gou.
 \newblock Word translation without parallel data.
 \newblock In {\em International Conference on Learning Representations}, 2018.
+
+\bibitem{faggioli2023query}
+Guglielmo Faggioli, Thibault Formal, Stefano Marchesin, St{\'e}phane Clinchant, Nicola Ferro, and Benjamin Piwowarski.
+\newblock Query performance prediction for neural ir: Are we there yet?
+\newblock In Jaap Kamps, Lorraine Goeuriot, Fabio Crestani, Maria Maistro, Hideo Joho, Brian Davis, Cathal Gurrin, Udo Kruschwitz, and Annalina Caputo, editors, {\em Advances in Information Retrieval - 45th European Conference on Information Retrieval, ECIR 2023, Dublin, Ireland, April 2-6, 2023, Proceedings, Part I}, volume 13980 of {\em Lecture Notes in Computer Science}, pages 232--248. Springer, 2023.
 
 \bibitem{gao2023hyde}
 Luyu Gao, Xueguang Ma, Jimmy Lin, and Jamie Callan.
 \newblock Precise zero-shot dense retrieval without relevance labels.
 \newblock {\em arXiv preprint arXiv:2212.10496}, 2023.
 
-\bibitem{groeneveld2024}
-Dirk Groeneveld, Iz~Beltagy, Pete Walsh, Akshita Bhagia, Rodney Kinney, et~al.
-\newblock Olmo: Accelerating the science of language models.
-\newblock {\em arXiv preprint arXiv:2402.00838}, 2024.
-
 \bibitem{guo2017temperature}
 Chuan Guo, Geoff Pleiss, Yu~Sun, and Kilian~Q Weinberger.
 \newblock On calibration of modern neural networks.
 \newblock In {\em ICML}, 2017.
 
-\bibitem{followir2024}
-Gehan Kotonya et~al.
-\newblock Followir: Evaluating and teaching instruction-following models for
-  information retrieval.
-\newblock In {\em Findings of the Association for Computational Linguistics:
-  EMNLP 2024}, 2024.
+\bibitem{hoveyda2026orlog}
+Mohanna Hoveyda, Jelle Piepenbrock, Arjen~P. de~Vries, Maarten de~Rijke, and Faegheh Hasibi.
+\newblock Orlog: Resolving complex queries with llms and probabilistic reasoning.
+\newblock In Ricardo Campos, Adam Jatowt, Yanyan Lan, Mohammad Aliannejadi, Christine Bauer, Sean MacAvaney, Avishek Anand, Zhaochun Ren, Suzan Verberne, Nan Bai, and Masoud Mansoury, editors, {\em Advances in Information Retrieval - 48th European Conference on Information Retrieval, ECIR 2026, Delft, The Netherlands, March 29 - April 2, 2026, Proceedings, Part I}, volume 16483 of {\em Lecture Notes in Computer Science}, pages 98--114. Springer, 2026.
+
+\bibitem{karpukhin2020dpr}
+Vladimir Karpukhin, Barlas Oguz, Sewon Min, Patrick Lewis, Ledell Wu, Sergey Edunov, Danqi Chen, and Wen-tau Yih.
+\newblock Dense passage retrieval for open-domain question answering.
+\newblock In {\em EMNLP}, 2020.
+
+\bibitem{deo2026}
+Taegyeong Lee, Jiwon Park, Seunghyun Hwang, and JooYoung Jang.
+\newblock Deo: Training-free direct embedding optimization for negation-aware retrieval.
+\newblock {\em arXiv preprint arXiv:2603.09185}, 2026.
 
 \bibitem{li2025deepretrieval}
 Xiang Li et~al.
-\newblock Deepretrieval: Retrieval-augmented query generation for information
-  retrieval.
+\newblock Deepretrieval: Retrieval-augmented query generation for information retrieval.
 \newblock {\em arXiv preprint}, 2025.
 
 \bibitem{ma2023ragqr}
 Xinbei Ma, Yeyun Gong, Pengcheng He, Hai Zhao, and Nan Duan.
 \newblock Query rewriting for retrieval-augmented large language models.
-\newblock In {\em Proceedings of the 2023 Conference on Empirical Methods in
-  Natural Language Processing}, 2023.
+\newblock In {\em Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing}, 2023.
 
 \bibitem{gritlm2024}
 Niklas Muennighoff et~al.
@@ -62,16 +61,19 @@ Niklas Muennighoff, Nouamane Tazi, Loec Magne, and Nils Reimers.
 \newblock In {\em EACL}, 2023.
 
 \bibitem{instructgpt2022}
-Long Ouyang, Jeff Wu, Xu~Jiang, Diogo Almeida, Carroll Wainwright, Pamela
-  Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et~al.
+Long Ouyang, Jeff Wu, Xu~Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et~al.
 \newblock Training language models to follow instructions with human feedback.
 \newblock {\em NeurIPS}, 2022.
 
 \bibitem{platt1999probabilistic}
 John Platt.
-\newblock Probabilistic outputs for support vector machines and comparisons to
-  regularized likelihood methods.
+\newblock Probabilistic outputs for support vector machines and comparisons to regularized likelihood methods.
 \newblock {\em Advances in Large Margin Classifiers}, 1999.
+
+\bibitem{pokhrel2026negation}
+Aashish Pokhrel and Shivanand~Venkanna Sheshappanavar.
+\newblock Negation matters: Training-free negation-aware image retrieval.
+\newblock In {\em Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Workshops}, pages 11353--11362, jun 2026.
 
 \bibitem{raudaschl2024ragfusion}
 Simon Raudaschl.
@@ -87,84 +89,58 @@ Hong Su et~al.
 \newblock One embedder, any task: Instruction-finetuned text embeddings.
 \newblock In {\em NeurIPS}, 2022.
 
-\bibitem{coconeg2024}
-TBD.
-\newblock Coco-neg: Evaluating negation in multimodal retrieval.
-\newblock {\em arXiv preprint}, 2024.
-
-\bibitem{deo2024}
-TBD.
-\newblock Deo: Disentangled explicit optimization for instruction-following
-  retrieval.
-\newblock {\em arXiv preprint}, 2024.
-\newblock \todo{cite needed — also known as NegConstraint dataset}.
-
-\bibitem{deo2026}
-TBD.
-\newblock Deo: Training-free direct embedding optimization for negation-aware
-  retrieval.
-\newblock {\em arXiv preprint arXiv:2603.09185}, 2026.
-
-\bibitem{followtable2026}
-TBD.
-\newblock Followtable: A benchmark for instruction-following table retrieval.
-\newblock {\em arXiv preprint arXiv:2605.00400}, 2026.
-
 \bibitem{beir2021}
-Nandan Thakur, Nils Reimers, Andreas R{\"u}ckl{\'e}, Iryna Gurevych, and
-  Johannes Daxenberger.
-\newblock Beir: A heterogeneous benchmark for zero-shot evaluation of
-  information retrieval models.
+Nandan Thakur, Nils Reimers, Andreas R{\"u}ckl{\'e}, Iryna Gurevych, and Johannes Daxenberger.
+\newblock Beir: A heterogeneous benchmark for zero-shot evaluation of information retrieval models.
 \newblock In {\em NeurIPS Datasets and Benchmarks}, 2021.
-
-\bibitem{llama2023}
-Hugo Touvron, Thibaut Lavril, Gautier Izac, Marie-Anne Martinet, Amelie
-  Lachaux, Timothee Lacroix, Baptiste Roziere, et~al.
-\newblock Llama: Open and efficient foundation language models.
-\newblock {\em arXiv preprint arXiv:2302.13971}, 2023.
 
 \bibitem{e5mistral2023}
 Liang Wang, Nan Yang, Xiaolong Huang, Linjun Yang, et~al.
 \newblock Improving text embeddings with large language models.
 \newblock {\em arXiv preprint arXiv:2401.00368}, 2023.
 
+\bibitem{wang2021pseudo}
+Xiao Wang, Craig Macdonald, Nicola Tonellotto, and Iadh Ounis.
+\newblock Pseudo-relevance feedback for multiple representation dense retrieval.
+\newblock In Faegheh Hasibi, Yi~Fang, and Akiko Aizawa, editors, {\em ICTIR '21: The 2021 ACM SIGIR International Conference on the Theory of Information Retrieval}, pages 297--306. ACM, 2021.
+
 \bibitem{wang2023query2doc}
 Zhicheng Wang, Yujia Zhang, Cheng Lu, Xiang Zhang, et~al.
 \newblock Active retrieval augmented generation.
-\newblock In {\em Proceedings of the 2023 Conference on Empirical Methods in
-  Natural Language Processing}, 2023.
+\newblock In {\em Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing}, 2023.
 
 \bibitem{flan2022}
-Jason Wei, Maarten Bosma, Vincent~Y. Zhao, Kelvin Guu, Adams Yu, Brian
-  Dunselman, Quoc~V. Dai, and Ed~H. Le.
+Jason Wei, Maarten Bosma, Vincent~Y. Zhao, Kelvin Guu, Adams Yu, Brian Dunselman, Quoc~V. Dai, and Ed~H. Le.
 \newblock Finetuned language models are zero-shot learners.
 \newblock {\em ICLR}, 2022.
 
+\bibitem{weller-etal-2025-followir}
+Orion Weller, Benjamin Chang, Sean MacAvaney, Kyle Lo, Arman Cohan, Benjamin Van~Durme, Dawn Lawrie, and Luca Soldaini.
+\newblock Followir: Evaluating and teaching information retrieval models to follow instructions.
+\newblock In {\em Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers)}, pages 11926--11942, Albuquerque, New Mexico, apr 2025. Association for Computational Linguistics.
+
 \bibitem{weller2024promptriever}
-Orion Weller, Benjamin Chang, Dawn Lawrie, Sean MacAvaney, Benjamin Van~Durme,
-  and Mahsa Yarmohammadi.
-\newblock Promptriever: Instruction-trained retrievers can be prompted like
-  language models.
-\newblock {\em arXiv preprint arXiv:2409.11136}, 2024.
+Orion Weller, Benjamin Van~Durme, Dawn Lawrie, Ashwin Paranjape, Yuhao Zhang, and Jack Hessel.
+\newblock Promptriever: Instruction-trained retrievers can be prompted like language models.
+\newblock In {\em International Conference on Learning Representations}, 2025.
 
-\bibitem{bge2023}
-Shitao Xiao, Zheng Liu, Peitian Zhang, and Niklas Muennighoff.
-\newblock C-pack: Packaged resources to advance general chinese embedding.
-\newblock {\em arXiv preprint arXiv:2309.07597}, 2023.
-
-\bibitem{negclip2022}
-Mert Yuksekgonul et~al.
-\newblock Negclip: Training clip to understand negation.
-\newblock In {\em arXiv preprint arXiv:2210.14697}, 2022.
+\bibitem{xu2025logical}
+Ganlin Xu, Zhoujia Zhang, Wangyi Mei, Jiaqing Liang, Weijia Lu, Xiaodong Zhang, Zhifei Yang, Xiaofeng Ma, Yanghua Xiao, and Deqing Yang.
+\newblock Logical consistency is vital: Neural-symbolic information retrieval for negative-constraint queries.
+\newblock In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad~Taher Pilehvar, editors, {\em Findings of the Association for Computational Linguistics: ACL 2025}, pages 1828--1847, Vienna, Austria, jul 2025. Association for Computational Linguistics.
 
 \bibitem{dualview2026}
 Qingcheng Zeng et~al.
 \newblock Dual-view training for instruction-following information retrieval.
 \newblock {\em arXiv preprint arXiv:2604.18845}, 2026.
 
+\bibitem{zhou2024batch}
+Han Zhou, Xingchen Wan, Lev Proleev, Diana Mincu, Jilin Chen, Katherine~A. Heller, and Subhrajit Roy.
+\newblock Batch calibration: Rethinking calibration for in-context learning and prompt engineering.
+\newblock In {\em The Twelfth International Conference on Learning Representations}. OpenReview.net, 2024.
+
 \bibitem{zhuang2025infir}
-Yuchen Zhuang, Aaron Trinh, Rushi Qiang, Haotian Sun, Chao Zhang, Hanjun Dai,
-  and Bo~Dai.
+Yuchen Zhuang, Aaron Trinh, Rushi Qiang, Haotian Sun, Chao Zhang, Hanjun Dai, and Bo~Dai.
 \newblock Towards better instruction following retrieval models.
 \newblock {\em arXiv preprint arXiv:2505.21439}, 2025.
 

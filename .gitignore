@@ -42,7 +42,32 @@ train/output/
 eval/results/
 analysis_output/
 
+# Virtual environments
+.venv-gritlm/
+
 # Temporary files
 .#
 .@
 *.tmp
+ccfa-review-reports/
+refs/
+
+# LaTeX auxiliary files
+*.aux
+*.out
+*.bbl
+*.blg
+*.fdb_latexmk
+*.flg
+*.fls
+*.log
+*.synctex.gz
+
+# Archives
+*.zip
+*.tar.gz
+*.tar
+
+# Paper temporary directories
+paper/AuthorKit27/
+paper/模拟评审/
